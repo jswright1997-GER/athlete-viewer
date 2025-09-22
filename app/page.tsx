@@ -417,9 +417,29 @@ export default function Page() {
       x0: p.start_ms / 1000.0, x1: p.end_ms / 1000.0, y0: 0, y1: 1,
       fillcolor: "rgba(59,130,246,0.18)", line: { width: 0 },
     }));
-    rects.push({ type: "line", x0: cursorMs / 1000.0, x1: cursorMs / 1000.0, y0: 0, y1: 1, xref: "x", yref: "paper", line: { color: "#e5e7eb", width: 2, dash: "dash" } });
+    // Fix: Use type assertion to bypass TypeScript's strict typing
+    rects.push({
+      type: "line", 
+      x0: cursorMs / 1000.0, 
+      x1: cursorMs / 1000.0, 
+      y0: 0, 
+      y1: 1, 
+      xref: "x", 
+      yref: "paper", 
+      line: { color: "#e5e7eb", width: 2, dash: "dash" } as any
+    } as any);
     if (editPhases && draftPhase?.x0 != null && draftPhase?.x1 != null) {
-      rects.push({ type: "rect", xref: "x", yref: "paper", x0: Math.min(draftPhase.x0, draftPhase.x1), x1: Math.max(draftPhase.x0, draftPhase.x1), y0: 0, y1: 1, fillcolor: "rgba(244,114,182,0.15)", line: { color: "#f472b6", width: 1, dash: "dot" } });
+      rects.push({
+        type: "rect", 
+        xref: "x", 
+        yref: "paper", 
+        x0: Math.min(draftPhase.x0, draftPhase.x1), 
+        x1: Math.max(draftPhase.x0, draftPhase.x1), 
+        y0: 0, 
+        y1: 1, 
+        fillcolor: "rgba(244,114,182,0.15)", 
+        line: { color: "#f472b6", width: 1, dash: "dot" } as any
+      } as any);
     }
     return rects;
   }, [phases, cursorMs, editPhases, draftPhase]);
@@ -494,13 +514,13 @@ No files are saved in demo mode.`;
       </div>
 
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "8px 16px 24px 16px" }}>
-        {/* Tabs — single row */}
+        {/* Tabs – single row */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, whiteSpace: "nowrap", overflowX: "auto" }}>
           <button onClick={() => setTab("main")} style={{ background: tab === "main" ? "#1f2a44" : "#0f172a", color: text, border: `1px solid ${tab === "main" ? "#3b82f6" : "#1f2937"}`, padding: "6px 10px", borderRadius: 8, fontWeight: 700, fontSize: 13 }}>Main Page</button>
           <button onClick={() => setTab("improve")} style={{ background: tab === "improve" ? "#1f2a44" : "#0f172a", color: text, border: `1px solid ${tab === "improve" ? "#3b82f6" : "#1f2937"}`, padding: "6px 10px", borderRadius: 8, fontWeight: 700, fontSize: 13 }}>Areas Of Improvement</button>
           <button onClick={() => setTab("exercises")} style={{ background: tab === "exercises" ? "#1f2a44" : "#0f172a", color: text, border: `1px solid ${tab === "exercises" ? "#3b82f6" : "#1f2937"}`, padding: "6px 10px", borderRadius: 8, fontWeight: 700, fontSize: 13 }}>Applied Exercises</button>
 
-          {/* Demo export button — main tab only */}
+          {/* Demo export button – main tab only */}
           {tab === "main" && (
             <button onClick={exportDemo} style={{ marginLeft: "auto", background: "#22c55e", color: "#0b1020", border: "none", padding: "6px 10px", borderRadius: 8, fontWeight: 800, fontSize: 13 }}>
               Export PNG + CSV (Demo)
@@ -524,7 +544,7 @@ No files are saved in demo mode.`;
                 <select value={sessionId} onChange={(e) => setSessionId(e.target.value)} style={{ width: "100%", background: "#0f172a", color: text, border: "1px solid #1f2937", padding: "8px 10px", borderRadius: 8 }}>
                   {sessions.map((s) => (
                     <option key={s.id} value={s.id} style={{ background: "#0f172a", color: text }}>
-                      {(s.date ? new Date(s.date).toISOString().slice(0, 10) : "—")} · {s.id}
+                      {(s.date ? new Date(s.date).toISOString().slice(0, 10) : "–")} · {s.id}
                     </option>
                   ))}
                 </select>
@@ -606,7 +626,7 @@ No files are saved in demo mode.`;
                   style={{ width: "100%" }}
                 />
 
-				{/* Metric cards — draggable re-order + red × in top-right */}
+				{/* Metric cards – draggable re-order + red × in top-right */}
 				{pinnedCards.length > 0 && (
 				  <div
 					style={{
@@ -710,7 +730,7 @@ No files are saved in demo mode.`;
 						  </div>
 						</div>
 						<div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 0.2 }}>
-						  {p.value == null ? "—" : p.value.toFixed(4)}
+						  {p.value == null ? "–" : p.value.toFixed(4)}
 						</div>
 					  </div>
 					))}
@@ -758,9 +778,9 @@ No files are saved in demo mode.`;
                                 <tr key={`${metric}-${p.name}-${p.start_ms}`} style={{ borderBottom: "1px solid #0f172a" }}>
                                   <td style={{ padding: 8 }}>{metaMap[metric]?.display_name || metric}</td>
                                   <td style={{ padding: 8 }}>{p.name}</td>
-                                  <td style={{ padding: 8, textAlign: "right" }}>{st.mean == null ? "—" : st.mean.toFixed(4)}</td>
-                                  <td style={{ padding: 8, textAlign: "right" }}>{st.peak == null ? "—" : st.peak.toFixed(4)}</td>
-                                  <td style={{ padding: 8, textAlign: "right" }}>{st.ttp_ms == null ? "—" : st.ttp_ms}</td>
+                                  <td style={{ padding: 8, textAlign: "right" }}>{st.mean == null ? "–" : st.mean.toFixed(4)}</td>
+                                  <td style={{ padding: 8, textAlign: "right" }}>{st.peak == null ? "–" : st.peak.toFixed(4)}</td>
+                                  <td style={{ padding: 8, textAlign: "right" }}>{st.ttp_ms == null ? "–" : st.ttp_ms}</td>
                                 </tr>
                               );
                             });
@@ -841,9 +861,9 @@ No files are saved in demo mode.`;
                             {pstats.map(ps => (
                               <tr key={ps.phase} style={{ borderBottom: "1px solid #0f172a" }}>
                                 <td style={{ padding: 8 }}>{ps.phase}</td>
-                                <td style={{ padding: 8, textAlign: "right" }}>{ps.mean == null ? "—" : ps.mean.toFixed(4)}</td>
-                                <td style={{ padding: 8, textAlign: "right" }}>{ps.peak == null ? "—" : ps.peak.toFixed(4)}</td>
-                                <td style={{ padding: 8, textAlign: "right" }}>{ps.ttp_ms == null ? "—" : ps.ttp_ms}</td>
+                                <td style={{ padding: 8, textAlign: "right" }}>{ps.mean == null ? "–" : ps.mean.toFixed(4)}</td>
+                                <td style={{ padding: 8, textAlign: "right" }}>{ps.peak == null ? "–" : ps.peak.toFixed(4)}</td>
+                                <td style={{ padding: 8, textAlign: "right" }}>{ps.ttp_ms == null ? "–" : ps.ttp_ms}</td>
                               </tr>
                             ))}
                           </tbody>
