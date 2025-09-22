@@ -407,42 +407,85 @@ export default function Page() {
     }).filter(Boolean) as unknown[];
   }, [series, smoothOn, metaMap, selectedMetrics]);
 
-  type RelayoutEvent = Partial<{ shapes: Array<Partial<{ x0: number; x1: number }>> }>;
-  type HoverPoint = { x: number };
-  type HoverEvent = { points?: HoverPoint[] };
+	/* ---------- Extra Plotly-safe types (no any) ---------- */
+	type PlotLineDash =
+	  | "solid"
+	  | "dot"
+	  | "dash"
+	  | "longdash"
+	  | "dashdot"
+	  | "longdashdot";
 
-  const shapes = useMemo(() => {
-    const rects = (phases || []).map((p) => ({
-      type: "rect", xref: "x", yref: "paper",
-      x0: p.start_ms / 1000.0, x1: p.end_ms / 1000.0, y0: 0, y1: 1,
-      fillcolor: "rgba(59,130,246,0.18)", line: { width: 0 },
-    }));
-    // Fix: Use type assertion to bypass TypeScript's strict typing
-    rects.push({
-      type: "line", 
-      x0: cursorMs / 1000.0, 
-      x1: cursorMs / 1000.0, 
-      y0: 0, 
-      y1: 1, 
-      xref: "x", 
-      yref: "paper", 
-      line: { color: "#e5e7eb", width: 2, dash: "dash" } as any
-    } as any);
-    if (editPhases && draftPhase?.x0 != null && draftPhase?.x1 != null) {
-      rects.push({
-        type: "rect", 
-        xref: "x", 
-        yref: "paper", 
-        x0: Math.min(draftPhase.x0, draftPhase.x1), 
-        x1: Math.max(draftPhase.x0, draftPhase.x1), 
-        y0: 0, 
-        y1: 1, 
-        fillcolor: "rgba(244,114,182,0.15)", 
-        line: { color: "#f472b6", width: 1, dash: "dot" } as any
-      } as any);
-    }
-    return rects;
-  }, [phases, cursorMs, editPhases, draftPhase]);
+	type PlotLine = {
+	  color?: string;
+	  width?: number;
+	  dash?: PlotLineDash;
+	};
+
+	type PlotShape = {
+	  type: "rect" | "line";
+	  xref: "x" | "paper";
+	  yref: "y" | "paper";
+	  x0: number;
+	  x1: number;
+	  y0: number;
+	  y1: number;
+	  fillcolor?: string;
+	  line?: PlotLine;
+	};
+
+	/* ---------- Plot + hover event typings ---------- */
+	type RelayoutEvent = Partial<{
+	  shapes: Array<Partial<Pick<PlotShape, "x0" | "x1">>>;
+	}>;
+
+	type HoverPoint = { x: number };
+	type HoverEvent = { points?: HoverPoint[] };
+
+	/* ---------- Shapes (cursor + saved phases + draft rectangle) ---------- */
+	const shapes = useMemo<PlotShape[]>(() => {
+	  const rects: PlotShape[] = (phases || []).map((p) => ({
+		type: "rect",
+		xref: "x",
+		yref: "paper",
+		x0: p.start_ms / 1000.0,
+		x1: p.end_ms / 1000.0,
+		y0: 0,
+		y1: 1,
+		fillcolor: "rgba(59,130,246,0.18)",
+		line: { width: 0 },
+	  }));
+
+	  // Cursor line
+	  rects.push({
+		type: "line",
+		xref: "x",
+		yref: "paper",
+		x0: cursorMs / 1000.0,
+		x1: cursorMs / 1000.0,
+		y0: 0,
+		y1: 1,
+		line: { color: "#e5e7eb", width: 2, dash: "dash" },
+	  });
+
+	  // Draft phase rectangle (when editing)
+	  if (editPhases && draftPhase?.x0 != null && draftPhase?.x1 != null) {
+		rects.push({
+		  type: "rect",
+		  xref: "x",
+		  yref: "paper",
+		  x0: Math.min(draftPhase.x0, draftPhase.x1),
+		  x1: Math.max(draftPhase.x0, draftPhase.x1),
+		  y0: 0,
+		  y1: 1,
+		  fillcolor: "rgba(244,114,182,0.15)",
+		  line: { color: "#f472b6", width: 1, dash: "dot" },
+		});
+	  }
+
+	  return rects;
+	}, [phases, cursorMs, editPhases, draftPhase]);
+
 
   const annotations = useMemo(() => (phases || []).map((p) => ({
     x: (p.start_ms + p.end_ms) / 2000, y: 1.04, xref: "x", yref: "paper", text: p.name, showarrow: false, font: { size: 10, color: "#cbd5e1" },
