@@ -357,7 +357,11 @@ export default function Page() {
 
   const ytId = useMemo(() => getYouTubeId(videoUrl), [videoUrl]);
   const canPlay = useMemo(() => !!ytId && /^https?:\/\//i.test(videoUrl), [ytId, videoUrl]);
-  const ytEmbedSrc = useMemo(() => (ytId ? `https://www.youtube.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1&autoplay=1&mute=1&loop=1&playlist=${ytId}&controls=1` : ""), [ytId]);
+  const ytEmbedSrc = useMemo(
+  () => (ytId ? `https://www.youtube.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1&controls=1` : ""),
+  [ytId]
+);
+
 
   /* ---- Cards ---- */
   const pinnedCards = useMemo(() => {
