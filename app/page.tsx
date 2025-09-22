@@ -9,13 +9,18 @@ import { supabase } from "../lib/supabaseClient";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
+/* ---------- Types ---------- */
 type Athlete = { id: string; name: string; team?: string | null };
 type Session = { id: string; athlete_id: string; date?: string | null; video_url?: string | null; notes?: string | null };
 type Phase = { session_id: string; name: string; start_ms: number; end_ms: number };
 type LODRow = { t_ms: number; value: number };
 type MetricMeta = { metric: string; display_name?: string | null; unit?: string | null; category?: string | null; color?: string | null };
 
-/* ---------- helpers ---------- */
+type RowSeriesLOD = { metric: string; level: number; t_ms?: number[]; values?: number[] };
+type RowSeriesLODJson = { metric: string; level: number; data?: { t_ms?: number[]; values?: number[] } };
+type RowTimeseriesLOD = { metric: string; level: number; t_ms: number; value: number };
+
+/* ---------- Helpers ---------- */
 function getYouTubeId(urlRaw: string | null | undefined): string | null {
   const s = (urlRaw ?? "").trim();
   if (!s) return null;
@@ -56,17 +61,17 @@ function sliceSeries(series: LODRow[], start: number, end: number) {
 }
 function phaseStats(series: LODRow[], p: Phase) {
   const seg = sliceSeries(series, p.start_ms, p.end_ms);
-  if (!seg.length) return { mean: null, peak: null, ttp_ms: null };
+  if (!seg.length) return { mean: null as number | null, peak: null as number | null, ttp_ms: null as number | null };
   let sum = 0, peak = -Infinity, peakT = seg[0].t_ms;
   for (const r of seg) { sum += r.value; if (r.value > peak) { peak = r.value; peakT = r.t_ms; } }
   return { mean: sum / seg.length, peak, ttp_ms: peakT - p.start_ms };
 }
 
-/* ---------- palette ---------- */
+/* ---------- Palette ---------- */
 const PALETTE = ["#60a5fa", "#22d3ee", "#34d399", "#f59e0b", "#f472b6", "#a78bfa", "#fb7185", "#f97316", "#84cc16", "#06b6d4"];
 
 export default function Page() {
-  /* ---- THEME ---- */
+  /* ---- Theme ---- */
   const bg = "#0b1020";
   const panel = "#121a2e";
   const text = "#e2e8f0";
@@ -78,9 +83,13 @@ export default function Page() {
 
   /* ---- Auth header ---- */
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null)); }, []);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
+  }, []);
   const [signingOut, startSignout] = useTransition();
-  const signOut = useCallback(() => { startSignout(async () => { await supabase.auth.signOut(); location.href = "/login"; }); }, []);
+  const signOut = useCallback(() => {
+    startSignout(async () => { await supabase.auth.signOut(); location.href = "/login"; });
+  }, []);
 
   /* ---- Selection state ---- */
   const [athletes, setAthletes] = useState<Athlete[]>([]);
@@ -152,36 +161,51 @@ export default function Page() {
     })();
   }, [athleteId]);
 
-  /* ---- Improvement metrics (demo) ---- */
+  /* ---- Improvement metrics (demo pick) ---- */
   const improvementMetrics = useMemo(() => {
     if (!metrics.length) return [] as string[];
     const shuffled = [...metrics].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, Math.min(3, shuffled.length));
-  }, [metrics, sessionId]);
+  }, [metrics]);
 
-  /* ---- Load metrics, phases, video & LOD ---- */
+  /* ---- Load metrics, phases, video & LOD metadata ---- */
   useEffect(() => {
     if (!sessionId) return;
     (async () => {
       let metNames: string[] = [];
-      let r = await supabase.from("series_lod").select("metric,level").eq("session_id", sessionId);
       let levels: number[] = [];
-      if (!r.error && r.data?.length) {
-        metNames = [...new Set((r.data as any[]).map((d) => d.metric))];
-        levels = [...new Set((r.data as any[]).map((d) => d.level as number))];
+
+      const res1 = await supabase
+        .from("series_lod")
+        .select("metric,level")
+        .eq("session_id", sessionId);
+
+      if (!res1.error && res1.data?.length) {
+        const rows = res1.data as unknown as Pick<RowSeriesLOD, "metric" | "level">[];
+        metNames = [...new Set(rows.map((d) => d.metric))];
+        levels = [...new Set(rows.map((d) => d.level))];
       } else {
-        const r2 = await supabase.from("series_lod_json").select("metric,level").eq("session_id", sessionId);
-        if (!r2.error && r2.data?.length) {
-          metNames = [...new Set((r2.data as any[]).map((d) => d.metric))];
-          levels = [...new Set((r2.data as any[]).map((d) => d.level as number))];
+        const res2 = await supabase
+          .from("series_lod_json")
+          .select("metric,level")
+          .eq("session_id", sessionId);
+        if (!res2.error && res2.data?.length) {
+          const rows = res2.data as unknown as Pick<RowSeriesLODJson, "metric" | "level">[];
+          metNames = [...new Set(rows.map((d) => d.metric))];
+          levels = [...new Set(rows.map((d) => d.level))];
         } else {
-          const r3 = await supabase.from("timeseries_lod").select("metric,level").eq("session_id", sessionId);
-          if (!r3.error && r3.data?.length) {
-            metNames = [...new Set((r3.data as any[]).map((d) => d.metric))];
-            levels = [...new Set((r3.data as any[]).map((d) => d.level as number))];
+          const res3 = await supabase
+            .from("timeseries_lod")
+            .select("metric,level")
+            .eq("session_id", sessionId);
+          if (!res3.error && res3.data?.length) {
+            const rows = res3.data as unknown as Pick<RowTimeseriesLOD, "metric" | "level">[];
+            metNames = [...new Set(rows.map((d) => d.metric))];
+            levels = [...new Set(rows.map((d) => d.level))];
           }
         }
       }
+
       metNames.sort((a, b) => a.localeCompare(b));
       setMetrics(metNames);
 
@@ -217,7 +241,7 @@ export default function Page() {
     })();
   }, [metrics]);
 
-  /* ---- Keep tray in sync with selection (card disappears when deselected) ---- */
+  /* ---- Keep tray in sync with selection ---- */
   useEffect(() => {
     setTrayMetrics(prev => prev.filter(m => selectedMetrics.includes(m)));
   }, [selectedMetrics]);
@@ -228,7 +252,7 @@ export default function Page() {
     setTrayMetrics(prev => Array.from(new Set([...prev, ...selectedMetrics])));
   }, [selectedMetrics]);
 
-  /* ---- Which metrics visible now ---- */
+  /* ---- Visible metrics ---- */
   const visibleMetrics = useMemo(
     () => Array.from(new Set([...selectedMetrics, ...(tab === "improve" ? improvementMetrics : [])])),
     [selectedMetrics, improvementMetrics, tab]
@@ -237,45 +261,77 @@ export default function Page() {
   /* ---- Load series data ---- */
   useEffect(() => {
     if (!sessionId || visibleMetrics.length === 0) { setSeries({}); return; }
+
     (async () => {
       let out: Record<string, LODRow[]> = {};
       let ok = false;
 
       if (autoLevel != null) {
-        const res = await supabase.from("series_lod").select("metric,t_ms,values")
-          .eq("session_id", sessionId).eq("level", autoLevel).in("metric", visibleMetrics);
+        const res = await supabase
+          .from("series_lod")
+          .select("metric,t_ms,values")
+          .eq("session_id", sessionId)
+          .eq("level", autoLevel)
+          .in("metric", visibleMetrics);
+
         if (!res.error && res.data?.length) {
-          for (const r of res.data as any[]) {
-            const xs: number[] = r.t_ms || []; const ys: number[] = r.values || [];
-            const arr: LODRow[] = []; for (let i = 0; i < Math.min(xs.length, ys.length); i++) arr.push({ t_ms: xs[i], value: ys[i] });
-            out[r.metric] = arr;
+          const rows = res.data as unknown as RowSeriesLOD[];
+          for (const row of rows) {
+            const xs = row.t_ms ?? [];
+            const ys = row.values ?? [];
+            const arr: LODRow[] = [];
+            const n = Math.min(xs.length, ys.length);
+            for (let i = 0; i < n; i++) arr.push({ t_ms: xs[i], value: ys[i] });
+            out[row.metric] = arr;
           }
           ok = true;
         }
       }
 
       if (!ok && autoLevel != null) {
-        const res2 = await supabase.from("series_lod_json").select("metric,data")
-          .eq("session_id", sessionId).eq("level", autoLevel).in("metric", visibleMetrics);
+        const res2 = await supabase
+          .from("series_lod_json")
+          .select("metric,data")
+          .eq("session_id", sessionId)
+          .eq("level", autoLevel)
+          .in("metric", visibleMetrics);
+
         if (!res2.error && res2.data?.length) {
+          const rows = res2.data as unknown as RowSeriesLODJson[];
           out = {};
-          for (const r of res2.data as any[]) {
-            const xs: number[] = r.data?.t_ms || []; const ys: number[] = r.data?.values || [];
-            const arr: LODRow[] = []; for (let i = 0; i < Math.min(xs.length, ys.length); i++) arr.push({ t_ms: xs[i], value: ys[i] });
-            out[r.metric] = arr;
+          for (const row of rows) {
+            const xs = row.data?.t_ms ?? [];
+            const ys = row.data?.values ?? [];
+            const arr: LODRow[] = [];
+            const n = Math.min(xs.length, ys.length);
+            for (let i = 0; i < n; i++) arr.push({ t_ms: xs[i], value: ys[i] });
+            out[row.metric] = arr;
           }
           ok = true;
         }
       }
 
       if (!ok) {
-        const res3 = await supabase.from("timeseries_lod").select("metric,t_ms,value,level")
-          .eq("session_id", sessionId).in("metric", visibleMetrics).order("t_ms");
+        const res3 = await supabase
+          .from("timeseries_lod")
+          .select("metric,t_ms,value,level")
+          .eq("session_id", sessionId)
+          .in("metric", visibleMetrics)
+          .order("t_ms");
+
         if (!res3.error && res3.data?.length) {
-          const byMetric: Record<string, LODRow[]> = {};
+          const rows = res3.data as unknown as RowTimeseriesLOD[];
           const byLevel: Record<string, number> = {};
-          (res3.data as any[]).forEach((r) => { const L = r.level as number; if (!byLevel[r.metric] || L > byLevel[r.metric]) byLevel[r.metric] = L; });
-          (res3.data as any[]).forEach((r) => { if (r.level === byLevel[r.metric]) (byMetric[r.metric] ||= []).push({ t_ms: r.t_ms, value: r.value }); });
+          for (const row of rows) {
+            const L = row.level;
+            if (byLevel[row.metric] == null || L > byLevel[row.metric]) byLevel[row.metric] = L;
+          }
+          const byMetric: Record<string, LODRow[]> = {};
+          for (const row of rows) {
+            if (row.level === byLevel[row.metric]) {
+              (byMetric[row.metric] ||= []).push({ t_ms: row.t_ms, value: row.value });
+            }
+          }
           out = byMetric;
         }
       }
@@ -286,7 +342,10 @@ export default function Page() {
 
   /* ---- Debounced search ---- */
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  useEffect(() => { const t = setTimeout(() => setDebouncedQuery(metricQuery.toLowerCase()), 120); return () => clearTimeout(t); }, [metricQuery]);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(metricQuery.toLowerCase()), 120);
+    return () => clearTimeout(t);
+  }, [metricQuery]);
 
   /* ---- Derived ---- */
   const filteredMetrics = useMemo(() => metrics.filter((m) => m.toLowerCase().includes(debouncedQuery)), [metrics, debouncedQuery]);
@@ -322,7 +381,7 @@ export default function Page() {
     setTrayMetrics((tray) => tray.filter((m) => m !== metric));
   }, []);
 
-  /* ---- Save/delete phases ---- */
+  /* ---- Save phase ---- */
   const savePhase = useCallback(async () => {
     if (!draftPhase || !draftName || !sessionId) return;
     const start_ms = Math.round(Math.min(draftPhase.x0!, draftPhase.x1!) * 1000);
@@ -333,16 +392,7 @@ export default function Page() {
     setDraftPhase(null); setDraftName("");
   }, [draftPhase, draftName, sessionId]);
 
-  const deletePhase = useCallback(async (p: Phase) => {
-    await supabase.from("phases").delete().eq("session_id", p.session_id).eq("name", p.name).eq("start_ms", p.start_ms).eq("end_ms", p.end_ms);
-    const { data } = await supabase.from("phases").select("*").eq("session_id", sessionId);
-    setPhases((data || []) as Phase[]);
-  }, [sessionId]);
-
-  /* ---- Main plot ---- */
-  const plotDivRef = useRef<HTMLDivElement | null>(null);
-  const onPlotInit = useCallback((_fig: any, gd: any) => { plotDivRef.current = gd; }, []);
-
+  /* ---- Plot ---- */
   const plotData = useMemo(() => {
     const colorFor: Record<string, string> = {};
     let idx = 0; for (const m of selectedMetrics) { colorFor[m] = metaMap[m]?.color || PALETTE[idx++ % PALETTE.length]; }
@@ -354,8 +404,12 @@ export default function Page() {
       const label = metaMap[metric]?.display_name || metric;
       const unit = metaMap[metric]?.unit;
       return { x, y, name: unit ? `${label} [${unit}]` : label, mode: "lines", type: "scattergl" as const, line: { width: 2 } };
-    }).filter(Boolean) as any[];
+    }).filter(Boolean) as unknown[];
   }, [series, smoothOn, metaMap, selectedMetrics]);
+
+  type RelayoutEvent = Partial<{ shapes: Array<Partial<{ x0: number; x1: number }>> }>;
+  type HoverPoint = { x: number };
+  type HoverEvent = { points?: HoverPoint[] };
 
   const shapes = useMemo(() => {
     const rects = (phases || []).map((p) => ({
@@ -374,78 +428,55 @@ export default function Page() {
     x: (p.start_ms + p.end_ms) / 2000, y: 1.04, xref: "x", yref: "paper", text: p.name, showarrow: false, font: { size: 10, color: "#cbd5e1" },
   })), [phases]);
 
-  /* ---- DEMO export (no files produced) ---- */
+  /* ---- DEMO export (Main tab only; no files written) ---- */
   const exportDemo = useCallback(() => {
-    const msg = `Demo export only.
-- Would export chart PNG for session ${sessionId || "-"}
-- Would export per-phase stats CSV for metrics: ${selectedMetrics.join(", ") || "-"}
-- Rows computed client-side (mean, peak, TTP)`;
+    const msg = `Demo export:
+- Chart PNG (would be generated) for session ${sessionId || "-"}
+- Per-phase stats CSV (mean, peak, TTP) for metrics: ${selectedMetrics.join(", ") || "-"}
+No files are saved in demo mode.`;
+    alert(msg);
     console.log(msg);
-    if (typeof window !== "undefined") alert(msg);
   }, [sessionId, selectedMetrics]);
 
-  /* ---- rAF hover throttle ---- */
+  /* ---- Hover throttle ---- */
   const rAF = useRef<number | null>(null);
-  const onHover = useCallback((ev: any) => {
+  const dragIndex = useRef<number | null>(null);
+  const onHover = useCallback((ev: HoverEvent) => {
     if (rAF.current != null) return;
     rAF.current = requestAnimationFrame(() => {
-      rAF.current && cancelAnimationFrame(rAF.current); rAF.current = null;
-      const pt = ev?.points?.[0];
-      if (pt && Number.isFinite(pt.x)) setCursorMs((v) => Math.max(0, Math.round(Number(pt.x) * 1000)));
+      if (rAF.current) cancelAnimationFrame(rAF.current);
+      rAF.current = null;
+      const pt = ev?.points && ev.points[0];
+      if (pt && Number.isFinite(pt.x)) {
+        setCursorMs(Math.max(0, Math.round(Number(pt.x) * 1000)));
+      }
     });
   }, []);
 
-  /* ---- Improvement cards (Athlete vs Professional + per-phase stats) ---- */
+  /* ---- Improvement cards (demo) ---- */
   const improvementCards = useMemo(() => {
     return (tab === "improve" ? improvementMetrics : []).map((metric, idx) => {
       const arr = series[metric] || [];
       const x = arr.map((r) => r.t_ms / 1000.0);
       const athlete = smoothOn ? smooth(arr.map((r) => r.value), 5) : arr.map((r) => r.value);
-      const prof = smooth(athlete, 9).map((v) => v * (0.95 + (idx * 0.02))); // demo benchmark
+      const prof = smooth(athlete, 9).map((v) => v * (0.95 + (idx * 0.02))); // demo
       const label = metaMap[metric]?.display_name || metric;
       const unit = metaMap[metric]?.unit;
       const title = unit ? `${label} [${unit}]` : label;
-
       const pstats = phases.map(p => {
         const segAth = phaseStats(arr, p);
         return { phase: p.name, mean: segAth.mean, peak: segAth.peak, ttp_ms: segAth.ttp_ms };
       });
-
       return { metric, title, x, athlete, prof, pstats };
     });
   }, [tab, improvementMetrics, series, metaMap, smoothOn, phases]);
 
-  /* ---- Exercises (demo) ---- */
-const exerciseRows = useMemo(
-  () => [
-    {
-      id: "cmj",
-      img: "/exercises/cmj.jpg",
-      name: "Countermovement Jump (CMJ)",
-      desc:
-        "Hands on hips. Emphasize full depth, stiff ankle on take-off, and quiet landing. 3 × 5.",
-      target: "Explosive concentric power, SSC utilization, landing mechanics.",
-    },
-    {
-      id: "medball-rot-throw",
-      img: "/exercises/medicine-ball-throw.jpg",
-      name: "Medicine Ball Rotational Throw",
-      desc:
-        "Explosive side-rotation into wall. 3 × 6/side. Cue hip–shoulder separation and braced front leg.",
-      target: "Sequencing, pelvis–torso disassociation, rotational power.",
-    },
-    {
-      id: "single-leg-stepdown",
-      img: "/exercises/single-leg-stepdown.png",
-      name: "Single-Leg Step-Down",
-      desc:
-        "Controlled eccentric lowering from small box. Knee tracks over toes, neutral pelvis. 3 × 8–10/side.",
-      target: "Frontal-plane stability, valgus control, deceleration.",
-    },
-  ],
-  []
-);
-
+  /* ---- Exercises (images in /public/exercises) ---- */
+  const exerciseRows = useMemo(() => [
+    { id: "cmj", img: "/exercises/cmj.jpg", name: "Countermovement Jump (CMJ)", desc: "Hands on hips. Emphasize full depth, stiff ankle on take-off, and quiet landing. 3 × 5.", target: "Explosive concentric power, SSC utilization, landing mechanics." },
+    { id: "medball-rot-throw", img: "/exercises/medicine-ball-throw.jpg", name: "Medicine Ball Rotational Throw", desc: "Explosive side-rotation into wall. 3 × 6/side. Cue hip–shoulder separation and braced front leg.", target: "Sequencing, pelvis–torso disassociation, rotational power." },
+    { id: "single-leg-stepdown", img: "/exercises/single-leg-stepdown.png", name: "Single-Leg Step-Down", desc: "Controlled eccentric lowering from small box. Knee tracks over toes, neutral pelvis. 3 × 8–10/side.", target: "Frontal-plane stability, valgus control, deceleration." },
+  ], []);
 
   return (
     <main style={{ background: bg, minHeight: "100vh", color: text }}>
@@ -463,13 +494,13 @@ const exerciseRows = useMemo(
       </div>
 
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "8px 16px 24px 16px" }}>
-        {/* Tabs — compact single line */}
+        {/* Tabs — single row */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, whiteSpace: "nowrap", overflowX: "auto" }}>
           <button onClick={() => setTab("main")} style={{ background: tab === "main" ? "#1f2a44" : "#0f172a", color: text, border: `1px solid ${tab === "main" ? "#3b82f6" : "#1f2937"}`, padding: "6px 10px", borderRadius: 8, fontWeight: 700, fontSize: 13 }}>Main Page</button>
           <button onClick={() => setTab("improve")} style={{ background: tab === "improve" ? "#1f2a44" : "#0f172a", color: text, border: `1px solid ${tab === "improve" ? "#3b82f6" : "#1f2937"}`, padding: "6px 10px", borderRadius: 8, fontWeight: 700, fontSize: 13 }}>Areas Of Improvement</button>
           <button onClick={() => setTab("exercises")} style={{ background: tab === "exercises" ? "#1f2a44" : "#0f172a", color: text, border: `1px solid ${tab === "exercises" ? "#3b82f6" : "#1f2937"}`, padding: "6px 10px", borderRadius: 8, fontWeight: 700, fontSize: 13 }}>Applied Exercises</button>
 
-          {/* DEMO export — Main tab only */}
+          {/* Demo export button — main tab only */}
           {tab === "main" && (
             <button onClick={exportDemo} style={{ marginLeft: "auto", background: "#22c55e", color: "#0b1020", border: "none", padding: "6px 10px", borderRadius: 8, fontWeight: 800, fontSize: 13 }}>
               Export PNG + CSV (Demo)
@@ -506,7 +537,12 @@ const exerciseRows = useMemo(
               <div style={{ background: panel, borderRadius: 12, padding: 12, boxShadow: "0 1px 0 rgba(255,255,255,0.06) inset" }}>
                 <div style={{ color: subtle, fontSize: 12, marginBottom: 6 }}>Metrics (overlay)</div>
 
-                <input placeholder="Search metrics…" value={metricQuery} onChange={(e) => setMetricQuery(e.target.value)} style={{ width: "100%", marginBottom: 8, background: "#0f172a", color: text, border: "1px solid #1f2937", padding: 8, borderRadius: 8 }} />
+                <input
+                  placeholder="Search metrics…"
+                  value={metricQuery}
+                  onChange={(e) => setMetricQuery(e.target.value)}
+                  style={{ width: "100%", marginBottom: 8, background: "#0f172a", color: text, border: "1px solid #1f2937", padding: 8, borderRadius: 8 }}
+                />
 
                 <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                   <button onClick={() => { setSelectedMetrics([]); setSeries({}); }} style={{ background: "#334155", color: text, border: "1px solid #475569", padding: "6px 10px", borderRadius: 8 }}>Clear All</button>
@@ -515,12 +551,18 @@ const exerciseRows = useMemo(
                   </label>
                 </div>
 
-                <select multiple value={selectedMetrics} onChange={(e) => {
-                  const options = Array.from(e.target.selectedOptions).map((o) => o.value);
-                  setSelectedMetrics(options);
-                }} style={{ width: "100%", height: 160, background: "#0f172a", color: text, border: "1px solid #1f2937", padding: 8, borderRadius: 8, marginBottom: 10 }}>
+                <select
+                  multiple
+                  value={selectedMetrics}
+                  onChange={(e) => {
+                    const options = Array.from(e.target.selectedOptions).map((o) => o.value);
+                    setSelectedMetrics(options);
+                  }}
+                  style={{ width: "100%", height: 160, background: "#0f172a", color: text, border: "1px solid #1f2937", padding: 8, borderRadius: 8, marginBottom: 10 }}
+                >
                   {filteredMetrics.map((m) => {
-                    const meta = metaMap[m]; const label = meta?.display_name ? `${meta.display_name}${meta?.unit ? ` [${meta.unit}]` : ""}` : m;
+                    const meta = metaMap[m];
+                    const label = meta?.display_name ? `${meta.display_name}${meta?.unit ? ` [${meta.unit}]` : ""}` : m;
                     return <option key={m} value={m} style={{ background: "#0f172a", color: text }}>{label}</option>;
                   })}
                 </select>
@@ -534,7 +576,7 @@ const exerciseRows = useMemo(
                 {/* Video */}
                 <div style={{ marginTop: 10, background: "#000000", borderRadius: 12, overflow: "hidden", border: "1px solid #1f2937" }}>
                   {canPlay ? (
-                    <iframe title="YouTube" width="100%" height="360" src={ytEmbedSrc} loading="lazy" frameBorder="0" allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+                    <iframe title="YouTube" width="100%" height="360" src={ytEmbedSrc} loading="lazy" frameBorder={0} allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
                   ) : (<div style={{ padding: 16, color: subtle }}>No valid video URL.</div>)}
                 </div>
               </div>
@@ -543,12 +585,13 @@ const exerciseRows = useMemo(
               <div style={{ background: panel, borderRadius: 12, padding: 12, boxShadow: "0 1px 0 rgba(255,255,255,0.06) inset" }}>
                 <Plot
                   data={plotData}
-                  onInitialized={onPlotInit}
-                  onRelayout={(e: any) => {
+                  onRelayout={(e: RelayoutEvent) => {
                     if (!editPhases) return;
-                    let x0: number | undefined, x1: number | undefined;
-                    if (e?.shapes && Array.isArray(e.shapes) && e.shapes.length) { const s = e.shapes[e.shapes.length - 1]; x0 = s.x0; x1 = s.x1; }
-                    if (x0 != null && x1 != null) setDraftPhase({ x0, x1 });
+                    const shapes = e.shapes ?? [];
+                    const s = shapes[shapes.length - 1];
+                    if (s && typeof s.x0 === "number" && typeof s.x1 === "number") {
+                      setDraftPhase({ x0: s.x0, x1: s.x1 });
+                    }
                   }}
                   onHover={onHover}
                   layout={{
@@ -559,34 +602,120 @@ const exerciseRows = useMemo(
                     hovermode: "x unified", shapes, annotations, showlegend: false,
                     uirevision: `${sessionId}-${selectedMetrics.join(",")}-${smoothOn ? "s" : "r"}-${editPhases ? "edit" : "view"}`
                   }}
-                  config={{ responsive: true, displaylogo: false, scrollZoom: false, doubleClick: false as any, displayModeBar: editPhases, modeBarButtonsToAdd: editPhases ? ["drawrect", "eraseshape"] : [], modeBarButtonsToRemove: ["zoom2d","pan2d","select2d","lasso2d","autoScale2d","resetScale2d","toImage","hoverclosest","hovercompare","toggleSpikelines"] }}
+                  config={{ responsive: true, displaylogo: false, scrollZoom: false, displayModeBar: editPhases, modeBarButtonsToAdd: editPhases ? ["drawrect", "eraseshape"] : [], modeBarButtonsToRemove: ["zoom2d","pan2d","select2d","lasso2d","autoScale2d","resetScale2d","toImage","hoverclosest","hovercompare","toggleSpikelines"] }}
                   style={{ width: "100%" }}
                 />
 
-                {/* Cards */}
-                {pinnedCards.length > 0 && (
-                  <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
-                    {pinnedCards.map((p) => (
-                      <div
-                        key={p.metric}
-                        title={p.active ? "Click to hide" : "Click to show"}
-                        onClick={() => toggleMetric(p.metric)}
-                        style={{ position: "relative", background: p.active ? "#0f172a" : "#0d1427", border: `1px solid ${p.active ? "#27304d" : "#1e263f"}`, opacity: p.active ? 1 : 0.45, borderRadius: 12, padding: "10px 12px", cursor: "grab" }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                          <span style={{ width: 10, height: 10, borderRadius: 999, background: p.color }} />
-                          <div style={{ fontSize: 12, color: subtle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
-                        </div>
-                        <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 0.2 }}>{p.value == null ? "—" : p.value.toFixed(4)}</div>
-                        <button
-                          aria-label="Remove metric" title="Remove"
-                          onClick={(ev) => { ev.stopPropagation(); removeMetric(p.metric); }}
-                          style={{ position: "absolute", top: 6, right: 6, width: 22, height: 22, display: "grid", placeItems: "center", background: "transparent", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 16, fontWeight: 900, lineHeight: 1, zIndex: 10 }}
-                        >×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+				{/* Metric cards — draggable re-order + red × in top-right */}
+				{pinnedCards.length > 0 && (
+				  <div
+					style={{
+					  marginTop: 10,
+					  display: "grid",
+					  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+					  gap: 8,
+					}}
+				  >
+					{pinnedCards.map((p, i) => (
+					  <div
+						key={p.metric}
+						title={p.active ? "Click to hide" : "Click to show"}
+						onClick={() => toggleMetric(p.metric)}
+						draggable
+						onDragStart={(e) => {
+						  dragIndex.current = i;
+						  e.dataTransfer.effectAllowed = "move";
+						}}
+						onDragOver={(e) => {
+						  e.preventDefault();
+						  e.dataTransfer.dropEffect = "move";
+						}}
+						onDrop={() => {
+						  const from = dragIndex.current;
+						  dragIndex.current = null;
+						  if (from == null || from === i) return;
+						  setTrayMetrics((arr) => {
+							const next = arr.slice();
+							const [m] = next.splice(from, 1);
+							next.splice(i, 0, m);
+							return next;
+						  });
+						}}
+						style={{
+						  position: "relative",
+						  background: p.active ? "#0f172a" : "#0d1427",
+						  border: `1px solid ${p.active ? "#27304d" : "#1e263f"}`,
+						  opacity: p.active ? 1 : 0.45,
+						  borderRadius: 12,
+						  padding: "10px 12px",
+						  cursor: "grab",
+						  transition:
+							"transform 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease",
+						}}
+						onMouseEnter={(e) => {
+						  (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)";
+						}}
+						onMouseLeave={(e) => {
+						  (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)";
+						}}
+					  >
+						{/* red × in top-right */}
+						<button
+						  aria-label="Remove metric"
+						  title="Remove"
+						  onClick={(ev) => {
+							ev.stopPropagation();
+							removeMetric(p.metric);
+						  }}
+						  style={{
+							position: "absolute",
+							top: 6,
+							right: 6,
+							width: 22,
+							height: 22,
+							display: "grid",
+							placeItems: "center",
+							background: "transparent",
+							border: "none",
+							color: "#dc2626",
+							cursor: "pointer",
+							fontSize: 16,
+							fontWeight: 900,
+							lineHeight: 1,
+							zIndex: 10,
+						  }}
+						>
+						  ×
+						</button>
+
+						<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+						  <span
+							style={{
+							  width: 10,
+							  height: 10,
+							  borderRadius: 999,
+							  background: p.color,
+							}}
+						  />
+						  <div
+							style={{
+							  fontSize: 12,
+							  color: subtle,
+							  overflow: "hidden",
+							  textOverflow: "ellipsis",
+							  whiteSpace: "nowrap",
+							}}
+						  >
+							{p.label}
+						  </div>
+						</div>
+						<div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 0.2 }}>
+						  {p.value == null ? "—" : p.value.toFixed(4)}
+						</div>
+					  </div>
+					))}
+				  </div>
+				)}
 
                 {/* Phase editor */}
                 <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed #1f2937", display: "grid", gap: 8 }}>
@@ -605,7 +734,7 @@ const exerciseRows = useMemo(
                   </div>
                 </div>
 
-                {/* Per-phase stats table (selected metrics) */}
+                {/* Per-phase stats table */}
                 {phases.length > 0 && selectedMetrics.length > 0 && (
                   <div style={{ marginTop: 14 }}>
                     <div style={{ fontWeight: 800, marginBottom: 6 }}>Per-phase stats</div>
@@ -665,8 +794,21 @@ const exerciseRows = useMemo(
                         { x, y: athlete, mode: "lines", type: "scattergl" as const, name: "Athlete Data", line: { width: 2 } },
                         { x, y: prof,    mode: "lines", type: "scattergl" as const, name: "Professional Data", line: { width: 2, dash: "dot" } },
                       ]}
-                      layout={{ height: 260, margin: { l: 48, r: 12, t: 6, b: 44 }, paper_bgcolor: panel, plot_bgcolor: "#0e162a", font: { color: text, size: 12 }, xaxis: { title: "Time (s)", gridcolor: "#203055", zerolinecolor: "#203055", fixedrange: true }, yaxis: { title: "Value", gridcolor: "#203055", zerolinecolor: "#203055", fixedrange: true }, showlegend: false }}
-                      config={{ responsive: true, displaylogo: false, modeBarButtonsToRemove: ["toImage","select2d","lasso2d","zoom2d","pan2d","resetScale2d"] }}
+                      layout={{
+                        height: 260,
+                        margin: { l: 48, r: 12, t: 6, b: 44 },
+                        paper_bgcolor: panel,
+                        plot_bgcolor: "#0e162a",
+                        font: { color: text, size: 12 },
+                        xaxis: { title: "Time (s)", gridcolor: "#203055", zerolinecolor: "#203055", fixedrange: true },
+                        yaxis: { title: "Value", gridcolor: "#203055", zerolinecolor: "#203055", fixedrange: true },
+                        showlegend: false,
+                      }}
+                      config={{
+                        responsive: true,
+                        displaylogo: false,
+                        modeBarButtonsToRemove: ["toImage","select2d","lasso2d","zoom2d","pan2d","resetScale2d"],
+                      }}
                       style={{ width: "100%" }}
                     />
                   </div>
@@ -723,144 +865,54 @@ const exerciseRows = useMemo(
           </div>
         )}
 
-{/* ===== APPLIED EXERCISES TAB ===== */}
-{tab === "exercises" && (
-  <div style={{ display: "grid", gap: 12 }}>
-    <div
-      style={{
-        background: panel,
-        padding: 12,
-        borderRadius: 12,
-        border: "1px solid #1f2937",
-      }}
-    >
-      <div
-        style={{
-          fontWeight: 800,
-          fontSize: 18,
-          letterSpacing: 0.2,
-          marginBottom: 6,
-        }}
-      >
-        Applied Exercises
-      </div>
-      <div style={{ color: subtle, fontSize: 13 }}>
-        Clearer images with larger previews and centered names.
-      </div>
-    </div>
+        {/* ===== APPLIED EXERCISES TAB ===== */}
+        {tab === "exercises" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ background: panel, padding: 12, borderRadius: 12, border: "1px solid #1f2937" }}>
+              <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: 0.2, marginBottom: 6 }}>Applied Exercises</div>
+              <div style={{ color: subtle, fontSize: 13 }}>Clearer images with larger previews and centered names.</div>
+            </div>
 
-    <div
-      style={{
-        border: "1px solid #1f2937",
-        borderRadius: 10,
-        overflow: "hidden",
-      }}
-    >
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ background: "#0f172a" }}>
-            <th
-              style={{
-                textAlign: "left",
-                padding: 10,
-                borderBottom: "1px solid #1f2937",
-                width: 420, // widened for larger image
-              }}
-            >
-              Exercise
-            </th>
-            <th
-              style={{
-                textAlign: "left",
-                padding: 10,
-                borderBottom: "1px solid #1f2937",
-              }}
-            >
-              Description
-            </th>
-            <th
-              style={{
-                textAlign: "left",
-                padding: 10,
-                borderBottom: "1px solid #1f2937",
-                width: 360,
-              }}
-            >
-              Targets
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {exerciseRows.map((ex, idx) => (
-            <tr
-              key={ex.id}
-              style={{ background: idx % 2 ? "#0c1428" : "#0b1020" }}
-            >
-              {/* Exercise column */}
-              <td style={{ padding: 10, verticalAlign: "top" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center", // center horizontally
-                  }}
-                >
-                  {/* Larger preview box */}
-                  <div
-                    style={{
-                      width: 400,
-                      height: 300,
-                      background: "#0f172a",
-                      border: "1px solid #27304d",
-                      borderRadius: 8,
-                      display: "grid",
-                      placeItems: "center",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <Image
-                      src={ex.img}
-                      alt={ex.name}
-                      width={400}
-                      height={300}
-                      style={{
-                        objectFit: "contain",
-                        width: "100%",
-                        height: "100%",
-                      }}
-                    />
-                  </div>
+            <div style={{ border: "1px solid #1f2937", borderRadius: 10, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#0f172a" }}>
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #1f2937", width: 420 }}>Exercise</th>
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #1f2937" }}>Description</th>
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #1f2937", width: 360 }}>Targets</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {exerciseRows.map((ex, idx) => (
+                    <tr key={ex.id} style={{ background: idx % 2 ? "#0c1428" : "#0b1020" }}>
+                      {/* Exercise column */}
+                      <td style={{ padding: 10, verticalAlign: "top" }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <div style={{ width: 400, height: 300, background: "#0f172a", border: "1px solid #27304d", borderRadius: 8, display: "grid", placeItems: "center", overflow: "hidden" }}>
+                            <Image
+                              src={ex.img}
+                              alt={ex.name}
+                              width={400}
+                              height={300}
+                              style={{ objectFit: "contain", width: "100%", height: "100%" }}
+                            />
+                          </div>
+                          <div style={{ marginTop: 12, fontWeight: 800, fontSize: 20, textAlign: "center" }}>{ex.name}</div>
+                        </div>
+                      </td>
 
-                  {/* Exercise name */}
-                  <div
-                    style={{
-                      marginTop: 12,
-                      fontWeight: 800,
-                      fontSize: 20, // larger
-                      textAlign: "center",
-                    }}
-                  >
-                    {ex.name}
-                  </div>
-                </div>
-              </td>
+                      {/* Description */}
+                      <td style={{ padding: 10, color: subtle, lineHeight: 1.5 }}>{ex.desc}</td>
 
-              {/* Description */}
-              <td style={{ padding: 10, color: subtle, lineHeight: 1.5 }}>
-                {ex.desc}
-              </td>
-
-              {/* Targets */}
-              <td style={{ padding: 10, color: subtle }}>{ex.target}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </div>
-)}
-
-
+                      {/* Targets */}
+                      <td style={{ padding: 10, color: subtle }}>{ex.target}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       <style jsx global>{`
