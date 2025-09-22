@@ -84,6 +84,19 @@ export default function Page() {
 // ---- Auth header ----
 const [userEmail, setUserEmail] = useState<string | null>(null);
 
+// --- Sign out ---
+const [signingOut, startSignout] = useTransition();
+const signOut = useCallback(() => {
+  startSignout(async () => {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      // client-side redirect back to login
+      window.location.href = "/login";
+    }
+  });
+}, []);
+
 useEffect(() => {
   let isMounted = true;
 
