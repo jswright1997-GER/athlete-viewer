@@ -81,15 +81,29 @@ export default function Page() {
   type TabKey = "main" | "improve" | "exercises";
   const [tab, setTab] = useState<TabKey>("main");
 
-  /* ---- Auth header ---- */
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
-  }, []);
-  const [signingOut, startSignout] = useTransition();
-  const signOut = useCallback(() => {
-    startSignout(async () => { await supabase.auth.signOut(); location.href = "/login"; });
-  }, []);
+// ---- Auth header ----
+const [userEmail, setUserEmail] = useState<string | null>(null);
+
+useEffect(() => {
+  let isMounted = true;
+
+  // initial read
+  supabase.auth.getUser().then(({ data }) => {
+    if (isMounted) setUserEmail(data.user?.email ?? null);
+  });
+
+  // live updates (login/logout)
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (isMounted) setUserEmail(session?.user?.email ?? null);
+  });
+
+  return () => {
+    isMounted = false;
+    subscription.unsubscribe();
+  };
+}, []);
 
   /* ---- Selection state ---- */
   const [athletes, setAthletes] = useState<Athlete[]>([]);
@@ -358,7 +372,7 @@ export default function Page() {
   const ytId = useMemo(() => getYouTubeId(videoUrl), [videoUrl]);
   const canPlay = useMemo(() => !!ytId && /^https?:\/\//i.test(videoUrl), [ytId, videoUrl]);
   const ytEmbedSrc = useMemo(
-  () => (ytId ? `https://www.youtube.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1&controls=1` : ""),
+  () => (ytId ? `https://www.youtube-nocookie.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1&controls=1` : ""),
   [ytId]
 );
 

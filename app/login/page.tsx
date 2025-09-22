@@ -1,21 +1,47 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { supabase } from "../../lib/supabaseClient";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { supabase } from "../../lib/supabaseClient";
 import BaseballIcon from "../icons/baseball.ico";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // If already signed in, skip this page
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!mounted) return;
+      if (data.user) router.replace("/");
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      if (session?.user) router.replace("/");
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [router]);
+
   async function signin(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setErr(error.message);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    router.replace("/"); // immediate client redirect
   }
 
   async function signup(e: React.FormEvent) {
@@ -26,7 +52,13 @@ export default function LoginPage() {
       password,
       options: { emailRedirectTo: `${location.origin}/` },
     });
-    if (error) setErr(error.message);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    // For password signup, Supabase may require email confirmation depending on your settings.
+    // After successful sign-up request, route to home; auth state listener will handle once confirmed.
+    router.replace("/");
   }
 
   return (
@@ -64,6 +96,7 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            autoComplete="email"
             style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}
           />
         </label>
@@ -75,6 +108,7 @@ export default function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            autoComplete="current-password"
             style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}
           />
         </label>
@@ -96,9 +130,10 @@ export default function LoginPage() {
               fontWeight: 800,
               cursor: "pointer",
               flex: 1,
+              opacity: pending ? 0.8 : 1,
             }}
           >
-            Sign in
+            {pending ? "Signing in…" : "Sign in"}
           </button>
           <button
             type="button"
@@ -112,6 +147,7 @@ export default function LoginPage() {
               borderRadius: 10,
               cursor: "pointer",
               flex: 1,
+              opacity: pending ? 0.8 : 1,
             }}
           >
             Create account
