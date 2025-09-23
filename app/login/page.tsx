@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "../../lib/supabaseClient";
 import BaseballIcon from "../icons/baseball.ico";
 
 export default function LoginPage() {
   const router = useRouter();
-  const params = useSearchParams();
-  const nextParam = params.get("next") || "/";
+  const nextParam = "/";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
