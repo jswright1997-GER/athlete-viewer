@@ -78,6 +78,9 @@ type UserLike = {
   payload?: UserLike;
 };
 
+// Minimal shape for PostgREST error codes without using `any`
+type PgRestErrorLike = { code?: string; message?: string } | null;
+
 export async function POST(req: Request) {
   // Read raw body first (needed for signature verification)
   const raw = await req.text();
@@ -118,8 +121,9 @@ export async function POST(req: Request) {
     .eq("id", id)
     .single();
 
-  if (readErr && (readErr as any).code !== "PGRST116") {
-    // PGRST116 = no rows found
+  const readErrCode = (readErr as PgRestErrorLike)?.code;
+  // PGRST116 = no rows found
+  if (readErr && readErrCode !== "PGRST116") {
     console.error("profiles read error:", readErr);
     return new NextResponse("Profile read error", { status: 500 });
   }
