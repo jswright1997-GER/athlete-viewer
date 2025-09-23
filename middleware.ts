@@ -13,6 +13,7 @@ export async function middleware(req: NextRequest) {
     "/admin-results",
     "/api/auth/webhook",
     "/api/admin/approve",
+	"/api/auth/signup",
     "/favicon.ico",
     "/icons",
     "/robots.txt",

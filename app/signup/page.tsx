@@ -1,3 +1,4 @@
+// app/signup/page.tsx
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
@@ -5,6 +6,16 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 
 type RoleRequested = "athlete" | "coach";
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (el: string | HTMLElement, opts: any) => string;
+      reset: (id?: string) => void;
+      getResponse: (id?: string) => string | undefined;
+    };
+  }
+}
 
 export default function SignupPage() {
   const router = useRouter();
@@ -16,6 +27,33 @@ export default function SignupPage() {
   const [err, setErr]             = useState<string | null>(null);
   const [okMsg, setOkMsg]         = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [captchaId, setCaptchaId] = useState<string | null>(null);
+
+  // Load Turnstile script
+  useEffect(() => {
+    const existing = document.querySelector('script[data-turnstile]');
+    if (existing) return;
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+    s.async = true;
+    s.defer = true;
+    s.setAttribute("data-turnstile", "true");
+    document.head.appendChild(s);
+  }, []);
+
+  // Render widget
+  useEffect(() => {
+    const int = setInterval(() => {
+      if (window.turnstile && !captchaId) {
+        const id = window.turnstile.render("#cf-turnstile", {
+          sitekey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || process.env.TURNSTILE_SITE_KEY,
+          theme: "dark",
+        });
+        setCaptchaId(id);
+      }
+    }, 200);
+    return () => clearInterval(int);
+  }, [captchaId]);
 
   // If already logged in, route based on approval
   useEffect(() => {
@@ -41,24 +79,34 @@ export default function SignupPage() {
     setErr(null);
     setOkMsg(null);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        // user fills these; webhook will store + email to admins AFTER they confirm
-        data: {
-          first_name: firstName.trim(),
-          last_name:  lastName.trim(),
-          role_requested: roleReq,
-        },
-        // After user clicks email link, Supabase will send them here:
-        emailRedirectTo: `${location.origin}/confirmed`,
-      },
+    const turnstileToken = window.turnstile?.getResponse(captchaId || undefined);
+    if (!turnstileToken) {
+      return setErr("Please complete the CAPTCHA.");
+    }
+
+    const res = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        first_name: firstName.trim(),
+        last_name:  lastName.trim(),
+        role_requested: roleReq,
+        email: email.trim(),
+        password,
+        turnstileToken,
+      }),
     });
 
-    if (error) return setErr(error.message);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      setErr(data?.error || "Signup failed.");
+      // reset captcha on failure
+      window.turnstile?.reset(captchaId || undefined);
+      return;
+    }
+
     setOkMsg("Account created. Please check your email to confirm.");
-    // Keep them on this page with the success message, or go to login:
+    // Optionally send them to login with a message:
     // router.replace("/login?msg=check_email");
   }
 
@@ -99,8 +147,12 @@ export default function SignupPage() {
         <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
           <span style={{ fontSize: 12, color: "#94a3b8" }}>Password</span>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password"
+                 placeholder="10+ chars, upper/lower/number/symbol"
                  style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }} />
         </label>
+
+        {/* Turnstile */}
+        <div id="cf-turnstile" style={{ marginBottom: 14 }} />
 
         {err && <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         {okMsg && <div style={{ color: "#86efac", fontSize: 13, marginBottom: 10 }}>{okMsg}</div>}
