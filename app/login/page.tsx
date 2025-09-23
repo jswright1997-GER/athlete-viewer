@@ -151,7 +151,7 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid "#1f2937", padding: "10px 12px", borderRadius: 10 }}
+            style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}
           />
         </label>
 
