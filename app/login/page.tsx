@@ -74,8 +74,8 @@ async function signin(e: React.FormEvent) {
   setIsLoading(true);
 
   try {
-    // 1) Try the password login
-    const { error } = await supabase.auth.signInWithPassword({
+    // A) Do the password login
+    const { data: signInData, error } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
     });
@@ -89,43 +89,52 @@ async function signin(e: React.FormEvent) {
       } else {
         setErr(error.message);
       }
-      await new Promise(r => setTimeout(r, 350)); // small delay for UX/rate-limit
+      await new Promise(r => setTimeout(r, 350));
       return;
     }
 
-    // 2) Wait briefly for session to materialize (guards against slow storage/cookie)
-    let user = null;
-    for (let i = 0; i < 12; i++) { // ~3.6s max
-      const { data: u } = await supabase.auth.getUser();
-      if (u.user) { user = u.user; break; }
-      await new Promise(r => setTimeout(r, 300));
-    }
-    if (!user) {
-      setErr("Signed in, but session didn’t load. If you use strict blockers/private mode, allow storage for this site and try again.");
+    // B) Immediately check session + user (diagnostic)
+    const [{ data: sess }, { data: usr }] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase.auth.getUser(),
+    ]);
+
+    // (Temporary) console diagnostics
+    console.log("signin OK -> session:", sess?.session ? "present" : "null");
+    console.log("signin OK -> user id:", usr?.user?.id || "<none>");
+
+    if (!sess?.session || !usr?.user) {
+      setErr(
+        "Signed in, but session didn’t load. If you use private mode or strict blockers, allow storage for this site and try again."
+      );
       return;
     }
 
-    // 3) Check approval and route explicitly
+    // C) Fetch profile.approved (show any error text)
     const { data: profile, error: profErr } = await supabase
       .from("profiles")
       .select("approved")
-      .eq("id", user.id)
+      .eq("id", usr.user.id)
       .single();
 
     if (profErr) {
-      // Even if profile query fails, take them to pending (safest)
+      console.error("profiles read error:", profErr);
+      // show the exact PostgREST error if available
+      setErr(`Profile read failed: ${profErr.message || "unknown error"}`);
+      // Still route to /pending so user isn't stuck
       router.replace("/pending");
       return;
     }
 
+    // D) Route explicitly
     router.replace(profile?.approved ? "/" : "/pending");
   } catch (e: unknown) {
     setErr(e instanceof Error ? e.message : "Unexpected error signing in.");
   } finally {
-    // Always clear the spinner
     setIsLoading(false);
   }
- }
+}
+
 
   async function resendConfirmation() {
     setErr(null);
