@@ -4,13 +4,18 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 
+type RoleRequested = "athlete" | "coach";
+
 export default function SignupPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName]   = useState("");
+  const [roleReq, setRoleReq]     = useState<RoleRequested>("athlete");
+  const [email, setEmail]         = useState("");
+  const [password, setPassword]   = useState("");
+  const [err, setErr]             = useState<string | null>(null);
+  const [okMsg, setOkMsg]         = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [okMsg, setOkMsg] = useState<string | null>(null);
 
   // If already logged in, route based on approval
   useEffect(() => {
@@ -35,22 +40,55 @@ export default function SignupPage() {
     e.preventDefault();
     setErr(null);
     setOkMsg(null);
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: `${location.origin}/` },
+      options: {
+        // user fills these; webhook will store + email to admins AFTER they confirm
+        data: {
+          first_name: firstName.trim(),
+          last_name:  lastName.trim(),
+          role_requested: roleReq,
+        },
+        // After user clicks email link, Supabase will send them here:
+        emailRedirectTo: `${location.origin}/confirmed`,
+      },
     });
-    if (error) return setErr(error.message);
 
-    setOkMsg("Account created. Please confirm your email. You’ll be moved to Pending until an admin approves you.");
-    router.replace("/pending");
+    if (error) return setErr(error.message);
+    setOkMsg("Account created. Please check your email to confirm.");
+    // Keep them on this page with the success message, or go to login:
+    // router.replace("/login?msg=check_email");
   }
 
   return (
     <main style={{ minHeight: "100vh", background: "#0b1020", display: "grid", placeItems: "center", color: "#e2e8f0", padding: 16 }}>
       <form onSubmit={(e) => startTransition(() => signup(e))}
-            style={{ width: "100%", maxWidth: 420, background: "#121a2e", border: "1px solid #1f2937", borderRadius: 16, padding: 20 }}>
-        <h2 style={{ margin: 0, fontWeight: 800, letterSpacing: 0.2, marginBottom: 10 }}>Create account</h2>
+            style={{ width: "100%", maxWidth: 480, background: "#121a2e", border: "1px solid #1f2937", borderRadius: 16, padding: 20 }}>
+        <h2 style={{ margin: 0, fontWeight: 800, letterSpacing: 0.2, marginBottom: 16 }}>Create account</h2>
+
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr", marginBottom: 10 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>First name</span>
+            <input value={firstName} onChange={(e) => setFirstName(e.target.value)} required
+                   style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }} />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>Last name</span>
+            <input value={lastName} onChange={(e) => setLastName(e.target.value)} required
+                   style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }} />
+          </label>
+        </div>
+
+        <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: "#94a3b8" }}>I am a</span>
+          <select value={roleReq} onChange={(e) => setRoleReq(e.target.value as RoleRequested)}
+                  style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}>
+            <option value="athlete">Athlete</option>
+            <option value="coach">Coach</option>
+          </select>
+        </label>
 
         <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
           <span style={{ fontSize: 12, color: "#94a3b8" }}>Email</span>
@@ -58,7 +96,7 @@ export default function SignupPage() {
                  style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }} />
         </label>
 
-        <label style={{ display: "grid", gap: 6, marginBottom: 14 }}>
+        <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
           <span style={{ fontSize: 12, color: "#94a3b8" }}>Password</span>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password"
                  style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }} />

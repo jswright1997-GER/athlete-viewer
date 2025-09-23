@@ -9,6 +9,7 @@ export async function middleware(req: NextRequest) {
     "/login",
 	"/signup",
     "/pending",
+	"/confirmed",
     "/admin-results",
     "/api/auth/webhook",
     "/api/admin/approve",
