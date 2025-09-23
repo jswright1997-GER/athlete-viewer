@@ -1,32 +1,11 @@
+// app/login/page.tsx
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "../../lib/supabaseClient";
 import BaseballIcon from "../icons/baseball.ico";
-
-/** Shows friendly banners based on ?msg=… */
-function LoginBanner() {
-  const params = useSearchParams();
-  const msg = params.get("msg");
-  if (msg === "await_approval") {
-    return (
-      <div style={{ background: "#0f172a", border: "1px solid #334155", color: "#93c5fd", padding: "10px 12px", borderRadius: 10, marginBottom: 12 }}>
-        Email confirmed. Please await approval from an admin.
-      </div>
-    );
-  }
-  if (msg === "check_email") {
-    return (
-      <div style={{ background: "#0f172a", border: "1px solid #334155", color: "#93c5fd", padding: "10px 12px", borderRadius: 10, marginBottom: 12 }}>
-        Please check your inbox and click the confirmation link to continue.
-      </div>
-    );
-  }
-  return null;
-}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -35,85 +14,88 @@ export default function LoginPage() {
   const [err, setErr] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // If already signed in, route to / or /pending based on approval
+  // If already signed in (local session), go home.
   useEffect(() => {
     let mounted = true;
-
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!mounted || !user) return;
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("approved")
-        .eq("id", user.id)
-        .single();
-      router.replace(profile?.approved ? "/" : "/pending");
-    })();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_evt, session) => {
+      const { data } = await supabase.auth.getSession();
       if (!mounted) return;
-      const user = session?.user;
-      if (!user) return;
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("approved")
-        .eq("id", user.id)
-        .single();
-      router.replace(profile?.approved ? "/" : "/pending");
-    });
-
+      if (data.session) router.replace("/");
+    })();
     return () => {
       mounted = false;
-      subscription.unsubscribe();
     };
   }, [router]);
 
-async function signin(e: React.FormEvent) {
-  e.preventDefault();
-  setErr(null);
-  setIsLoading(true);
-  try {
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
-    if (error) {
-      const msg = (error.message || "").toLowerCase();
-      if (msg.includes("email not confirmed")) {
-        setErr("Your email isn’t confirmed yet. Click the link we sent or use “Resend confirmation”.");
-      } else if (msg.includes("invalid login credentials")) {
-        setErr("Invalid email or password.");
-      } else {
-        setErr(error.message);
+  async function signin(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    setIsLoading(true);
+
+    try {
+      // 1) Password login
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
+      if (error) {
+        const msg = (error.message || "").toLowerCase();
+        if (msg.includes("email not confirmed")) {
+          setErr(
+            "Your email isn’t confirmed yet. Click the link we sent or use “Resend confirmation”."
+          );
+        } else if (msg.includes("invalid login credentials")) {
+          setErr("Invalid email or password.");
+        } else {
+          setErr(error.message);
+        }
+        return;
       }
-      await new Promise(r => setTimeout(r, 350));
-      return;
+
+      // 2) Get current client session (localStorage)
+      const { data: s } = await supabase.auth.getSession();
+      if (!s.session) {
+        setErr(
+          "Signed in, but session didn’t load. If you use private mode or strict blockers, allow storage for this site and try again."
+        );
+        return;
+      }
+
+      // 3) Sync session to server cookies so middleware/server can read it
+      const res = await fetch("/api/auth/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "SIGNED_IN", session: s.session }),
+      });
+
+      if (!res.ok) {
+        const { error: apiErr } = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setErr(apiErr || "Failed to persist session. Please try again.");
+        return;
+      }
+
+      // 4) Hard navigate so the server sees the cookie immediately
+      window.location.assign("/");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Unexpected error signing in.");
+    } finally {
+      setIsLoading(false);
     }
-
-    // ✅ Hard reload to pick up the session and let middleware/server checks run
-    window.location.assign("/");
-    return;
-
-  } catch (e: unknown) {
-    setErr(e instanceof Error ? e.message : "Unexpected error signing in.");
-  } finally {
-    setIsLoading(false);
   }
-}
-
-
 
   async function resendConfirmation() {
     setErr(null);
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.resend({ type: "signup", email: email.trim() });
-      if (error) {
-        setErr(error.message);
-      } else {
-        // nudge the user to check email
-        router.replace("/login?msg=check_email");
-      }
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email.trim().toLowerCase(),
+      });
+      if (error) setErr(error.message);
+      else router.replace("/login?msg=check_email");
     } finally {
       setIsLoading(false);
     }
@@ -147,11 +129,6 @@ async function signin(e: React.FormEvent) {
           <h2 style={{ margin: 0, fontWeight: 800, letterSpacing: 0.2 }}>Sign in</h2>
         </div>
 
-        {/* Banner for messages like ?msg=await_approval */}
-        <Suspense fallback={null}>
-          <LoginBanner />
-        </Suspense>
-
         <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
           <span style={{ fontSize: 12, color: "#94a3b8" }}>Email</span>
           <input
@@ -160,7 +137,13 @@ async function signin(e: React.FormEvent) {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}
+            style={{
+              background: "#0f172a",
+              color: "#e2e8f0",
+              border: "1px solid #1f2937",
+              padding: "10px 12px",
+              borderRadius: 10,
+            }}
           />
         </label>
 
@@ -172,13 +155,17 @@ async function signin(e: React.FormEvent) {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}
+            style={{
+              background: "#0f172a",
+              color: "#e2e8f0",
+              border: "1px solid #1f2937",
+              padding: "10px 12px",
+              borderRadius: 10,
+            }}
           />
         </label>
 
-        {err && (
-          <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>
-        )}
+        {err && <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button
@@ -218,7 +205,6 @@ async function signin(e: React.FormEvent) {
           </button>
         </div>
 
-        {/* Helper to resend confirmation if needed */}
         <button
           type="button"
           onClick={resendConfirmation}
