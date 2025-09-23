@@ -1,69 +1,63 @@
 // middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+
+function bypass(pathname: string) {
+  return (
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/favicon") ||
+    pathname.startsWith("/icons") ||
+    pathname.startsWith("/assets") ||
+    pathname.startsWith("/public") ||
+    pathname.startsWith("/api/") ||               // <— allow ALL API routes
+    pathname === "/login" ||
+    pathname === "/signup" ||
+    pathname === "/confirmed" ||
+    pathname === "/reset" ||
+    pathname === "/pending"
+  );
+}
 
 export async function middleware(req: NextRequest) {
-  // Paths that should always be reachable without auth/approval
-  const publicPrefixes = [
-    "/login",
-	"/reset",
-	"/signup",
-    "/pending",
-	"/confirmed",
-    "/admin-results",
-    "/api/auth/webhook",
-    "/api/admin/approve",
-	"/api/auth/signup",
-    "/favicon.ico",
-    "/icons",
-    "/robots.txt",
-    "/sitemap.xml",
-    "/_next",          // Next.js assets
-    "/static",         // if you use /static
-  ];
-
   const { pathname } = req.nextUrl;
-  if (publicPrefixes.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    return NextResponse.next();
-  }
 
+  // Don’t guard public paths & API routes
+  if (bypass(pathname)) return NextResponse.next();
+
+  // For protected app pages, check user via cookies
   const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req, res });
 
-  // 1) Is there a session?
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll().map(({ name, value }) => ({ name, value }));
+        },
+        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+          for (const { name, value, options } of cookiesToSet) {
+            res.cookies.set(name, value, options);
+          }
+        },
+      },
+    }
+  );
 
-  if (!session) {
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
-    // Preserve where they were going
     url.searchParams.set("next", pathname);
     return NextResponse.redirect(url);
-  }
-
-  // 2) Gate on approval
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("approved")
-    .eq("id", session.user.id)
-    .single();
-
-  if (error || !profile?.approved) {
-    // Always allow the pending page itself
-    if (pathname !== "/pending" && !pathname.startsWith("/pending/")) {
-      const url = req.nextUrl.clone();
-      url.pathname = "/pending";
-      return NextResponse.redirect(url);
-    }
   }
 
   return res;
 }
 
-// Match all app routes except assets and APIs (we listed the API routes we allow above)
+// Run middleware on all routes except files
 export const config = {
-  matcher: ["/((?!.*\\.|_next).*)"],
+  matcher: ["/((?!.*\\..*).*)"],
 };
