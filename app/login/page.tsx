@@ -72,14 +72,11 @@ async function signin(e: React.FormEvent) {
   e.preventDefault();
   setErr(null);
   setIsLoading(true);
-
   try {
-    // A) Do the password login
-    const { data: signInData, error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
     });
-
     if (error) {
       const msg = (error.message || "").toLowerCase();
       if (msg.includes("email not confirmed")) {
@@ -93,47 +90,17 @@ async function signin(e: React.FormEvent) {
       return;
     }
 
-    // B) Immediately check session + user (diagnostic)
-    const [{ data: sess }, { data: usr }] = await Promise.all([
-      supabase.auth.getSession(),
-      supabase.auth.getUser(),
-    ]);
+    // ✅ Hard reload to pick up the session and let middleware/server checks run
+    window.location.assign("/");
+    return;
 
-    // (Temporary) console diagnostics
-    console.log("signin OK -> session:", sess?.session ? "present" : "null");
-    console.log("signin OK -> user id:", usr?.user?.id || "<none>");
-
-    if (!sess?.session || !usr?.user) {
-      setErr(
-        "Signed in, but session didn’t load. If you use private mode or strict blockers, allow storage for this site and try again."
-      );
-      return;
-    }
-
-    // C) Fetch profile.approved (show any error text)
-    const { data: profile, error: profErr } = await supabase
-      .from("profiles")
-      .select("approved")
-      .eq("id", usr.user.id)
-      .single();
-
-    if (profErr) {
-      console.error("profiles read error:", profErr);
-      // show the exact PostgREST error if available
-      setErr(`Profile read failed: ${profErr.message || "unknown error"}`);
-      // Still route to /pending so user isn't stuck
-      router.replace("/pending");
-      return;
-    }
-
-    // D) Route explicitly
-    router.replace(profile?.approved ? "/" : "/pending");
   } catch (e: unknown) {
     setErr(e instanceof Error ? e.message : "Unexpected error signing in.");
   } finally {
     setIsLoading(false);
   }
 }
+
 
 
   async function resendConfirmation() {
