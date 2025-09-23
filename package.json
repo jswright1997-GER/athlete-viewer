@@ -17,8 +17,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-player": "^3.3.2",
-    "react-plotly.js": "^2.6.0",
-    "resend": "^6.1.0"
+    "react-plotly.js": "^2.6.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
