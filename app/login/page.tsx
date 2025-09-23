@@ -42,9 +42,7 @@ export default function LoginPage() {
       if (error) {
         const msg = (error.message || "").toLowerCase();
         if (msg.includes("email not confirmed")) {
-          setErr(
-            "Your email isn’t confirmed yet. Click the link we sent or use “Resend confirmation”."
-          );
+          setErr("Your email isn’t confirmed yet. Click the link we sent or use “Resend confirmation”.");
         } else if (msg.includes("invalid login credentials")) {
           setErr("Invalid email or password.");
         } else {
@@ -53,31 +51,28 @@ export default function LoginPage() {
         return;
       }
 
-      // 2) Get current client session (localStorage)
+      // 2) Grab current session from client
       const { data: s } = await supabase.auth.getSession();
-      if (!s.session) {
-        setErr(
-          "Signed in, but session didn’t load. If you use private mode or strict blockers, allow storage for this site and try again."
-        );
+      const access_token = s.session?.access_token;
+      const refresh_token = s.session?.refresh_token;
+      if (!access_token || !refresh_token) {
+        setErr("Signed in, but session didn’t load. If you use private mode or strict blockers, allow storage for this site and try again.");
         return;
       }
 
-      // 3) Sync session to server cookies so middleware/server can read it
+      // 3) Sync tokens to server cookies so middleware/server can read session
       const res = await fetch("/api/auth/set", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "SIGNED_IN", session: s.session }),
+        body: JSON.stringify({ access_token, refresh_token }),
       });
-
       if (!res.ok) {
-        const { error: apiErr } = (await res.json().catch(() => ({}))) as {
-          error?: string;
-        };
+        const { error: apiErr } = (await res.json().catch(() => ({}))) as { error?: string };
         setErr(apiErr || "Failed to persist session. Please try again.");
         return;
       }
 
-      // 4) Hard navigate so the server sees the cookie immediately
+      // 4) Hard navigate so server immediately sees the sb-* cookies
       window.location.assign("/");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Unexpected error signing in.");

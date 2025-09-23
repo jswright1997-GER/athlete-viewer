@@ -1,25 +1,13 @@
 // app/api/auth/set/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 export const runtime = "nodejs";
 
-// Minimal cookie options compatible with Next's cookies()
-type SupaCookieOptions = {
-  path?: string;
-  domain?: string;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: "lax" | "strict" | "none";
-  maxAge?: number;
-  expires?: Date;
-};
-
-type SessionPayload = {
-  event?: string;
-  // We don’t need the full session type here
-  session: Record<string, unknown>;
+type SetSessionPayload = {
+  access_token: string;
+  refresh_token: string;
 };
 
 export async function POST(req: Request) {
@@ -30,31 +18,35 @@ export async function POST(req: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        // Return all cookies to the helper
+        getAll() {
+          return cookieStore.getAll().map(({ name, value }) => ({ name, value }));
         },
-        set(name: string, value: string, options?: SupaCookieOptions) {
-          cookieStore.set({ name, value, ...(options ?? {}) });
-        },
-        remove(name: string, options?: SupaCookieOptions) {
-          cookieStore.set({ name, value: "", ...(options ?? {}), maxAge: 0 });
+        // Set/overwrite cookies provided by the helper
+        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+          for (const { name, value, options } of cookiesToSet) {
+            cookieStore.set(name, value, options);
+          }
         },
       },
     }
   );
 
-  let body: SessionPayload | null = null;
+  let body: SetSessionPayload | null = null;
   try {
-    body = (await req.json()) as SessionPayload;
+    body = (await req.json()) as SetSessionPayload;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body?.session) {
-    return NextResponse.json({ ok: false, error: "No session" }, { status: 400 });
-    }
+  if (!body?.access_token || !body?.refresh_token) {
+    return NextResponse.json({ ok: false, error: "Missing tokens" }, { status: 400 });
+  }
 
-  const { error } = await supabase.auth.setSession(body.session);
+  const { error } = await supabase.auth.setSession({
+    access_token: body.access_token,
+    refresh_token: body.refresh_token,
+  });
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
   }
