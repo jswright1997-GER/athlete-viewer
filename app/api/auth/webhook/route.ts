@@ -19,30 +19,32 @@ const APP_URL = process.env.APP_URL || "http://localhost:3000";
 
 /** Verify Supabase webhook signature header (x-supabase-signature: v1,<hex>) */
 function verifySupabaseSignature(req: Request, rawBody: string): boolean {
-  const header = req.headers.get("x-supabase-signature") || req.headers.get("x-webhook-signature");
+  const header =
+    req.headers.get("x-supabase-signature") || req.headers.get("x-webhook-signature");
   if (!header) return false;
-  const [version, signature] = header.split(",", 2);
-  if (version?.trim() !== "v1" || !signature) return false;
+
+  const parts = header.split(",", 2);
+  const version = parts[0]?.trim();
+  const signature = parts[1]?.trim();
+  if (version !== "v1" || !signature) return false;
 
   const secret = process.env.AUTH_WEBHOOK_SECRET!;
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
 
-  // constant-time compare
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
-/** Back-compat: allow either our simple shared-secret headers OR the signature. */
-async function isAuthorized(req: Request, rawBody: string): Promise<boolean> {
-  // Signature check
-  if (verifySupabaseSignature(req, rawBody)) return true;
-
-  // Fallback to simple header checks (useful for local tests)
+/** Back-compat: allow either Supabase signature or a simple shared-secret header */
+function isAuthorizedFallback(req: Request): boolean {
   const want = process.env.AUTH_WEBHOOK_SECRET!;
   const x = req.headers.get("x-auth-secret");
   const auth = req.headers.get("authorization"); // Bearer <secret>
   if (x && x === want) return true;
   if (auth && /^Bearer\s+/i.test(auth) && auth.replace(/^Bearer\s+/i, "") === want) return true;
-
   return false;
 }
 
@@ -62,24 +64,36 @@ async function sendEmail(to: string[], subject: string, html: string) {
   }).catch((e) => console.error("Resend error:", e));
 }
 
+type UserLike = {
+  id?: string;
+  email?: string;
+  record?: UserLike;
+  user?: UserLike;
+  new?: UserLike;
+  payload?: UserLike;
+};
+
 export async function POST(req: Request) {
-  // IMPORTANT: read raw body first (for signature)
+  // IMPORTANT: read raw body first (for signature verification)
   const raw = await req.text();
-  if (!(await isAuthorized(req, raw))) return new NextResponse("Unauthorized", { status: 401 });
+
+  const authorized =
+    verifySupabaseSignature(req, raw) || isAuthorizedFallback(req);
+  if (!authorized) return new NextResponse("Unauthorized", { status: 401 });
 
   // Parse after auth
-  let payload: any;
+  let payload: UserLike;
   try {
-    payload = JSON.parse(raw);
+    payload = JSON.parse(raw) as UserLike;
   } catch {
     return new NextResponse("Bad JSON", { status: 400 });
   }
 
-  // Supabase Auth "User Created" payloads usually include user info at one of these paths
+  // Supabase "User Created" payload typically nests the user at one of the following keys
   const user =
-    payload?.record || payload?.user || payload?.new || payload?.payload || payload;
-  const id: string | undefined = user?.id;
-  const email: string | undefined = user?.email;
+    payload.record || payload.user || payload.new || payload.payload || payload;
+  const id = user?.id;
+  const email = user?.email;
   if (!id || !email) return NextResponse.json({ ok: true });
 
   // Upsert unapproved profile
@@ -89,7 +103,7 @@ export async function POST(req: Request) {
 
   // One-time nonces for approve/deny
   if (ADMIN_EMAILS.length) {
-    const expires = new Date(Date.now() + 1000 * 60 * 60); // 1h
+    const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
     const nonceApprove = crypto.randomUUID();
     const nonceDeny = crypto.randomUUID();
 
@@ -98,8 +112,12 @@ export async function POST(req: Request) {
       { user_id: id, nonce: nonceDeny, action: "deny", expires_at: expires },
     ]);
 
-    const approveUrl = `${APP_URL}/api/admin/approve?nonce=${encodeURIComponent(nonceApprove)}`;
-    const denyUrl = `${APP_URL}/api/admin/approve?nonce=${encodeURIComponent(nonceDeny)}`;
+    const approveUrl = `${APP_URL}/api/admin/approve?nonce=${encodeURIComponent(
+      nonceApprove
+    )}`;
+    const denyUrl = `${APP_URL}/api/admin/approve?nonce=${encodeURIComponent(
+      nonceDeny
+    )}`;
 
     await sendEmail(
       ADMIN_EMAILS,
