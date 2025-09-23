@@ -11,7 +11,8 @@ type SetSessionPayload = {
 };
 
 export async function POST(req: Request) {
-  const cookieStore = cookies();
+  // NOTE: in your Next version, cookies() is async
+  const cookieStore = await cookies();
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
