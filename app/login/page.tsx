@@ -1,17 +1,16 @@
 "use client";
 
-import { Suspense, useEffect, useState, useTransition } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "../../lib/supabaseClient";
 import BaseballIcon from "../icons/baseball.ico";
 
-/** Small banner that reads a ?msg=… query param and shows helper text. */
+/** Shows friendly banners based on ?msg=… */
 function LoginBanner() {
   const params = useSearchParams();
   const msg = params.get("msg");
-
   if (msg === "await_approval") {
     return (
       <div style={{ background: "#0f172a", border: "1px solid #334155", color: "#93c5fd", padding: "10px 12px", borderRadius: 10, marginBottom: 12 }}>
@@ -34,7 +33,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [isLoading, setIsLoading] = useState(false);
 
   // If already signed in, route to / or /pending based on approval
   useEffect(() => {
@@ -72,9 +71,43 @@ export default function LoginPage() {
   async function signin(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setErr(error.message);
-    // Redirect handled by onAuthStateChange above
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) {
+        // Give clearer guidance for common cases
+        const msg = error.message?.toLowerCase() || "";
+        if (msg.includes("invalid login credentials")) {
+          setErr("Invalid email or password.");
+        } else if (msg.includes("email not confirmed")) {
+          setErr("Your email isn’t confirmed yet. Check your inbox or resend below.");
+        } else {
+          setErr(error.message);
+        }
+        // small delay to avoid brute-force hammering UX
+        await new Promise((r) => setTimeout(r, 350));
+        return;
+      }
+      // onAuthStateChange handler will redirect to / or /pending
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function resendConfirmation() {
+    setErr(null);
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.resend({ type: "signup", email: email.trim() });
+      if (error) {
+        setErr(error.message);
+      } else {
+        // nudge the user to check email
+        router.replace("/login?msg=check_email");
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -89,7 +122,7 @@ export default function LoginPage() {
       }}
     >
       <form
-        onSubmit={(e) => startTransition(() => signin(e))}
+        onSubmit={signin}
         style={{
           width: "100%",
           maxWidth: 420,
@@ -118,7 +151,7 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }}
+            style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid "#1f2937", padding: "10px 12px", borderRadius: 10 }}
           />
         </label>
 
@@ -138,10 +171,10 @@ export default function LoginPage() {
           <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>
         )}
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button
             type="submit"
-            disabled={pending}
+            disabled={isLoading}
             style={{
               background: "#22c55e",
               color: "#0b1020",
@@ -151,17 +184,16 @@ export default function LoginPage() {
               fontWeight: 800,
               cursor: "pointer",
               flex: 1,
-              opacity: pending ? 0.8 : 1,
+              opacity: isLoading ? 0.8 : 1,
             }}
           >
-            {pending ? "Signing in…" : "Sign in"}
+            {isLoading ? "Signing in…" : "Sign in"}
           </button>
 
-          {/* Dedicated signup page */}
           <button
             type="button"
             onClick={() => router.push("/signup")}
-            disabled={pending}
+            disabled={isLoading}
             style={{
               background: "#334155",
               color: "#e2e8f0",
@@ -170,12 +202,29 @@ export default function LoginPage() {
               borderRadius: 10,
               cursor: "pointer",
               flex: 1,
-              opacity: pending ? 0.8 : 1,
+              opacity: isLoading ? 0.8 : 1,
             }}
           >
             Create account
           </button>
         </div>
+
+        {/* Helper to resend confirmation if needed */}
+        <button
+          type="button"
+          onClick={resendConfirmation}
+          disabled={isLoading || !email}
+          style={{
+            width: "100%",
+            background: "transparent",
+            color: "#93c5fd",
+            border: "none",
+            textDecoration: "underline",
+            cursor: email ? "pointer" : "not-allowed",
+          }}
+        >
+          Resend confirmation email
+        </button>
       </form>
     </main>
   );
