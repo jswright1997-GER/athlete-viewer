@@ -68,31 +68,64 @@ export default function LoginPage() {
     };
   }, [router]);
 
-  async function signin(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    setIsLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) {
-        // Give clearer guidance for common cases
-        const msg = error.message?.toLowerCase() || "";
-        if (msg.includes("invalid login credentials")) {
-          setErr("Invalid email or password.");
-        } else if (msg.includes("email not confirmed")) {
-          setErr("Your email isn’t confirmed yet. Check your inbox or resend below.");
-        } else {
-          setErr(error.message);
-        }
-        // small delay to avoid brute-force hammering UX
-        await new Promise((r) => setTimeout(r, 350));
-        return;
+async function signin(e: React.FormEvent) {
+  e.preventDefault();
+  setErr(null);
+  setIsLoading(true);
+
+  try {
+    // 1) Try the password login
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (error) {
+      const msg = (error.message || "").toLowerCase();
+      if (msg.includes("email not confirmed")) {
+        setErr("Your email isn’t confirmed yet. Click the link we sent or use “Resend confirmation”.");
+      } else if (msg.includes("invalid login credentials")) {
+        setErr("Invalid email or password.");
+      } else {
+        setErr(error.message);
       }
-      // onAuthStateChange handler will redirect to / or /pending
-    } finally {
-      setIsLoading(false);
+      await new Promise(r => setTimeout(r, 350)); // small delay for UX/rate-limit
+      return;
     }
+
+    // 2) Wait briefly for session to materialize (guards against slow storage/cookie)
+    let user = null;
+    for (let i = 0; i < 12; i++) { // ~3.6s max
+      const { data: u } = await supabase.auth.getUser();
+      if (u.user) { user = u.user; break; }
+      await new Promise(r => setTimeout(r, 300));
+    }
+    if (!user) {
+      setErr("Signed in, but session didn’t load. If you use strict blockers/private mode, allow storage for this site and try again.");
+      return;
+    }
+
+    // 3) Check approval and route explicitly
+    const { data: profile, error: profErr } = await supabase
+      .from("profiles")
+      .select("approved")
+      .eq("id", user.id)
+      .single();
+
+    if (profErr) {
+      // Even if profile query fails, take them to pending (safest)
+      router.replace("/pending");
+      return;
+    }
+
+    router.replace(profile?.approved ? "/" : "/pending");
+  } catch (e: unknown) {
+    setErr(e instanceof Error ? e.message : "Unexpected error signing in.");
+  } finally {
+    // Always clear the spinner
+    setIsLoading(false);
   }
+ }
 
   async function resendConfirmation() {
     setErr(null);
