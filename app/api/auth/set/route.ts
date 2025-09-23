@@ -1,11 +1,11 @@
 // app/api/auth/set/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 
 export const runtime = "nodejs";
 
-// Minimal options shape compatible with Next cookies().set(...)
+// Minimal cookie options compatible with Next's cookies()
 type SupaCookieOptions = {
   path?: string;
   domain?: string;
@@ -18,7 +18,7 @@ type SupaCookieOptions = {
 
 type SessionPayload = {
   event?: string;
-  // Supabase session object (we don’t need to type every field here)
+  // We don’t need the full session type here
   session: Record<string, unknown>;
 };
 
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
 
   if (!body?.session) {
     return NextResponse.json({ ok: false, error: "No session" }, { status: 400 });
-  }
+    }
 
   const { error } = await supabase.auth.setSession(body.session);
   if (error) {
