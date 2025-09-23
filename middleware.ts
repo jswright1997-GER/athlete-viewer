@@ -7,6 +7,7 @@ export async function middleware(req: NextRequest) {
   // Paths that should always be reachable without auth/approval
   const publicPrefixes = [
     "/login",
+	"/signup",
     "/pending",
     "/admin-results",
     "/api/auth/webhook",
