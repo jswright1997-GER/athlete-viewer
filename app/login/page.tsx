@@ -76,7 +76,7 @@ async function signin(e: React.FormEvent) {
   try {
     // 1) Try the password login
     const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      email: email.trim().toLowerCase(),
       password,
     });
 
