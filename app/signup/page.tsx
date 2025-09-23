@@ -7,10 +7,23 @@ import { supabase } from "../../lib/supabaseClient";
 
 type RoleRequested = "athlete" | "coach";
 
+type TurnstileTheme = "light" | "dark" | "auto";
+type TurnstileAppearance = "always" | "execute" | "interaction-only";
+type TurnstileRenderOptions = {
+  sitekey: string;
+  theme?: TurnstileTheme;
+  appearance?: TurnstileAppearance;
+  action?: string;
+  cData?: string;
+  callback?: (token: string) => void;
+  "error-callback"?: () => void;
+  "expired-callback"?: () => void;
+};
+
 declare global {
   interface Window {
     turnstile?: {
-      render: (el: string | HTMLElement, opts: any) => string;
+      render: (el: string | HTMLElement, opts: TurnstileRenderOptions) => string;
       reset: (id?: string) => void;
       getResponse: (id?: string) => string | undefined;
     };
@@ -29,10 +42,9 @@ export default function SignupPage() {
   const [pending, startTransition] = useTransition();
   const [captchaId, setCaptchaId] = useState<string | null>(null);
 
-  // Load Turnstile script
+  // Load Turnstile script once
   useEffect(() => {
-    const existing = document.querySelector('script[data-turnstile]');
-    if (existing) return;
+    if (document.querySelector('script[data-turnstile]')) return;
     const s = document.createElement("script");
     s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
     s.async = true;
@@ -41,12 +53,15 @@ export default function SignupPage() {
     document.head.appendChild(s);
   }, []);
 
-  // Render widget
+  // Render widget when available
   useEffect(() => {
     const int = setInterval(() => {
       if (window.turnstile && !captchaId) {
+        const sitekey =
+          process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ||
+          process.env.TURNSTILE_SITE_KEY || ""; // must be set in env
         const id = window.turnstile.render("#cf-turnstile", {
-          sitekey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || process.env.TURNSTILE_SITE_KEY,
+          sitekey,
           theme: "dark",
         });
         setCaptchaId(id);
@@ -61,14 +76,22 @@ export default function SignupPage() {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!mounted || !user) return;
-      const { data: profile } = await supabase.from("profiles").select("approved").eq("id", user.id).single();
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("approved")
+        .eq("id", user.id)
+        .single();
       router.replace(profile?.approved ? "/" : "/pending");
     })();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_evt, session) => {
       if (!mounted) return;
       const user = session?.user;
       if (!user) return;
-      const { data: profile } = await supabase.from("profiles").select("approved").eq("id", user.id).single();
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("approved")
+        .eq("id", user.id)
+        .single();
       router.replace(profile?.approved ? "/" : "/pending");
     });
     return () => { mounted = false; subscription.unsubscribe(); };
@@ -97,16 +120,15 @@ export default function SignupPage() {
       }),
     });
 
-    const data = await res.json().catch(() => ({}));
+    const data: { ok?: boolean; error?: string } = await res.json().catch(() => ({}));
     if (!res.ok || !data?.ok) {
       setErr(data?.error || "Signup failed.");
-      // reset captcha on failure
       window.turnstile?.reset(captchaId || undefined);
       return;
     }
 
     setOkMsg("Account created. Please check your email to confirm.");
-    // Optionally send them to login with a message:
+    // Optionally route to login with message:
     // router.replace("/login?msg=check_email");
   }
 
@@ -151,7 +173,7 @@ export default function SignupPage() {
                  style={{ background: "#0f172a", color: "#e2e8f0", border: "1px solid #1f2937", padding: "10px 12px", borderRadius: 10 }} />
         </label>
 
-        {/* Turnstile */}
+        {/* Turnstile widget target */}
         <div id="cf-turnstile" style={{ marginBottom: 14 }} />
 
         {err && <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>}
