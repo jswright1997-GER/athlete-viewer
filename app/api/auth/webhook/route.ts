@@ -1,6 +1,7 @@
 // app/api/auth/webhook/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 
@@ -31,19 +32,14 @@ async function sendEmail(to: string[], subject: string, html: string) {
   const from = process.env.RESEND_FROM!;
   if (!apiKey || !from) return;
 
-  const res = await fetch("https://api.resend.com/emails", {
+  await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ from, to, subject, html }),
-  });
-
-  if (!res.ok) {
-    const msg = await res.text().catch(() => res.statusText);
-    console.error("Resend error:", res.status, msg);
-  }
+  }).catch((e) => console.error("Resend error:", e));
 }
 
 export async function POST(req: Request) {
@@ -55,14 +51,24 @@ export async function POST(req: Request) {
   const email: string | undefined = user?.email;
   if (!id || !email) return NextResponse.json({ ok: true });
 
+  // Upsert profile (approved = false by default)
   await service
     .from("profiles")
     .upsert({ id, email, role: "user", approved: false }, { onConflict: "id" });
 
-  if (ADMIN_EMAILS.length && process.env.RESEND_API_KEY && process.env.RESEND_FROM) {
-    const token = process.env.ADMIN_ACTION_TOKEN!;
-    const approveUrl = `${APP_URL}/api/admin/approve?user_id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}&action=approve`;
-    const denyUrl = `${APP_URL}/api/admin/approve?user_id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}&action=deny`;
+  // Create one-time approval nonces
+  if (ADMIN_EMAILS.length) {
+    const nonceApprove = crypto.randomUUID();
+    const nonceDeny = crypto.randomUUID();
+    const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+
+    await service.from("admin_action_nonce").insert([
+      { user_id: id, nonce: nonceApprove, action: "approve", expires_at: expires },
+      { user_id: id, nonce: nonceDeny, action: "deny", expires_at: expires },
+    ]);
+
+    const approveUrl = `${APP_URL}/api/admin/approve?nonce=${encodeURIComponent(nonceApprove)}`;
+    const denyUrl = `${APP_URL}/api/admin/approve?nonce=${encodeURIComponent(nonceDeny)}`;
 
     await sendEmail(
       ADMIN_EMAILS,

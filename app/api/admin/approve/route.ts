@@ -9,67 +9,68 @@ const service = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// --- optional email helper via Resend HTTP (no SDK) ---
+// optional notify helper
 async function sendEmail(to: string, subject: string, html: string) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM;
-  if (!apiKey || !from) return; // silently skip if email is not configured
-
+  if (!apiKey || !from) return;
   await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from, to, subject, html }),
-  }).catch((e) => {
-    console.error("Resend send error:", e);
-  });
+  }).catch((e) => console.error("Resend send error:", e));
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const userId = url.searchParams.get("user_id");
-  const action = url.searchParams.get("action"); // "approve" | "deny"
-  const token  = url.searchParams.get("token");
+  const nonce = url.searchParams.get("nonce");
+  if (!nonce) return new NextResponse("Bad request", { status: 400 });
 
-  // authorize admin action
-  if (!token || token !== process.env.ADMIN_ACTION_TOKEN) {
-    return new NextResponse("Unauthorized", { status: 401 });
+  // Lookup nonce
+  const { data: record, error } = await service
+    .from("admin_action_nonce")
+    .select("user_id, action, expires_at, used")
+    .eq("nonce", nonce)
+    .single();
+
+  if (error || !record) return new NextResponse("Invalid or expired link", { status: 400 });
+  if (record.used) return new NextResponse("This link has already been used", { status: 400 });
+  if (new Date(record.expires_at) < new Date()) {
+    return new NextResponse("This link has expired", { status: 400 });
   }
-  if (!userId || !["approve", "deny"].includes(action || "")) {
-    return new NextResponse("Bad request", { status: 400 });
-  }
 
-  const approved = action === "approve";
+  const approved = record.action === "approve";
 
-  // update the profile row
-  const { data, error } = await service
+  // Update profile
+  const { data: profile, error: updateErr } = await service
     .from("profiles")
     .update({ approved })
-    .eq("id", userId)
+    .eq("id", record.user_id)
     .select("email")
     .single();
 
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  if (updateErr) {
+    return NextResponse.json({ ok: false, error: updateErr.message }, { status: 500 });
   }
 
-  // optional notify user
-  if (data?.email) {
+  // Mark nonce as used
+  await service.from("admin_action_nonce").update({ used: true }).eq("nonce", nonce);
+
+  // Notify user
+  if (profile?.email) {
     const subject = approved
-      ? "Your Regensburg Academy account was approved"
-      : "Your Regensburg Academy account was denied";
+      ? "Your account has been approved"
+      : "Your account has been denied";
     const body = approved
       ? `Your account is approved. You can now sign in.`
       : `Sorry, your account request was denied.`;
-    await sendEmail(data.email, subject, `<p>${body}</p>`);
+    await sendEmail(profile.email, subject, `<p>${body}</p>`);
   }
 
   const html = `
     <html><body style="font-family:sans-serif;padding:24px;background:#0b1020;color:#e2e8f0">
       <h2>${approved ? "Approved" : "Denied"}</h2>
-      <p>User: ${data?.email || userId}</p>
+      <p>User: ${profile?.email || record.user_id}</p>
       <p>Status updated.</p>
     </body></html>
   `;

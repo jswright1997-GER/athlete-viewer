@@ -1,85 +1,65 @@
 // middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const BYPASS_ALL = process.env.ADMIN_BYPASS === "1";
-const BYPASS_TOKEN = process.env.ADMIN_BYPASS_TOKEN || "";
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 
 export async function middleware(req: NextRequest) {
-  // 1) Global bypass (for maintenance etc.)
-  if (BYPASS_ALL) return NextResponse.next();
+  // Paths that should always be reachable without auth/approval
+  const publicPrefixes = [
+    "/login",
+    "/pending",
+    "/admin-results",
+    "/api/auth/webhook",
+    "/api/admin/approve",
+    "/favicon.ico",
+    "/icons",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/_next",          // Next.js assets
+    "/static",         // if you use /static
+  ];
 
-  const url = req.nextUrl;
-
-  // 2) Admin bypass token via query -> set cookie and redirect to clean URL
-  const tokenFromQuery = url.searchParams.get("admin");
-  if (BYPASS_TOKEN && tokenFromQuery === BYPASS_TOKEN) {
-    const res = NextResponse.redirect(new URL(url.pathname, req.url));
-    res.cookies.set("admin_bypass", BYPASS_TOKEN, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      // secure is recommended in production; uncomment if you want to enforce:
-      // secure: process.env.NODE_ENV === "production",
-    });
-    return res;
+  const { pathname } = req.nextUrl;
+  if (publicPrefixes.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    return NextResponse.next();
   }
 
-  // 3) If bypass cookie present, skip auth checks
-  const hasBypassCookie = req.cookies.get("admin_bypass")?.value === BYPASS_TOKEN;
-  if (BYPASS_TOKEN && hasBypassCookie) return NextResponse.next();
-
-  // 4) Create a response we can mutate (for Supabase to write cookies)
   const res = NextResponse.next();
+  const supabase = createMiddlewareClient({ req, res });
 
-  // 5) Supabase server client (use getAll/setAll for the current API)
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        // Convert NextRequest cookies to the shape Supabase expects
-        return req.cookies.getAll().map(({ name, value }) => ({ name, value }));
-      },
-      setAll(cookies) {
-        // Apply all cookie mutations to the response
-        cookies.forEach(({ name, value, options }) => {
-          res.cookies.set({ name, value, ...options });
-        });
-      },
-    },
-  });
-
-  // 6) Check session
+  // 1) Is there a session?
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
-  const isAuthRoute =
-    url.pathname.startsWith("/login") || url.pathname.startsWith("/auth");
-
-  // 7) Redirect unauthenticated users to /login (preserve source)
-  if (!session && !isAuthRoute) {
-    const redirect = url.clone();
-    redirect.pathname = "/login";
-    redirect.searchParams.set("redirectedFrom", url.pathname);
-    return NextResponse.redirect(redirect);
-    // Note: return the redirect, not `res`
+  if (!session) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/login";
+    // Preserve where they were going
+    url.searchParams.set("next", pathname);
+    return NextResponse.redirect(url);
   }
 
-  // 8) If already authed and on /login, send to home
-  if (session && url.pathname.startsWith("/login")) {
-    return NextResponse.redirect(new URL("/", req.url));
+  // 2) Gate on approval
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("approved")
+    .eq("id", session.user.id)
+    .single();
+
+  if (error || !profile?.approved) {
+    // Always allow the pending page itself
+    if (pathname !== "/pending" && !pathname.startsWith("/pending/")) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/pending";
+      return NextResponse.redirect(url);
+    }
   }
 
-  // 9) Otherwise continue with the (possibly mutated) response
   return res;
 }
 
-// Match everything except Next.js internals, static assets, and your public images/icons
+// Match all app routes except assets and APIs (we listed the API routes we allow above)
 export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icons|.*\\.(?:png|jpg|jpeg|svg|gif|webp)$).*)",
-  ],
+  matcher: ["/((?!.*\\.|_next).*)"],
 };

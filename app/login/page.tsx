@@ -1,49 +1,64 @@
 "use client";
 
-import { useEffect, useState, useTransition, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "../../lib/supabaseClient";
 import BaseballIcon from "../icons/baseball.ico";
 
 export default function LoginPage() {
   const router = useRouter();
+  const params = useSearchParams();
+  const nextParam = params.get("next") || "/";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
- 
- 
 
-  // If already signed in, skip this page
+  // If already signed in, route based on approval
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return;
-      if (data.user) router.replace("/");
-    });
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!mounted || !user) return;
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("approved")
+        .eq("id", user.id)
+        .single();
+
+      router.replace(profile?.approved ? nextParam : "/pending");
+    })();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
-      if (session?.user) router.replace("/");
+      const user = session?.user;
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("approved")
+        .eq("id", user.id)
+        .single();
+
+      router.replace(profile?.approved ? nextParam : "/pending");
     });
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, nextParam]);
 
   async function signin(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setErr(error.message);
-      return;
-    }
-    router.replace("/"); // immediate client redirect
+    if (error) setErr(error.message);
+    // Redirect handled by onAuthStateChange above
   }
 
   async function signup(e: React.FormEvent) {
@@ -54,13 +69,10 @@ export default function LoginPage() {
       password,
       options: { emailRedirectTo: `${location.origin}/` },
     });
-    if (error) {
-      setErr(error.message);
-      return;
-    }
-    // For password signup, Supabase may require email confirmation depending on your settings.
-    // After successful sign-up request, route to home; auth state listener will handle once confirmed.
-    router.replace("/");
+    if (error) return setErr(error.message);
+
+    // New users must confirm email; they start as approved=false
+    router.replace("/pending");
   }
 
   return (
@@ -115,9 +127,7 @@ export default function LoginPage() {
           />
         </label>
 
-        {err && (
-          <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>
-        )}
+        {err && <div style={{ color: "#fca5a5", fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
         <div style={{ display: "flex", gap: 8 }}>
           <button
